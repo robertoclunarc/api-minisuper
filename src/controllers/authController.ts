@@ -1,13 +1,16 @@
 import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
+import jwt, { Secret, SignOptions} from 'jsonwebtoken';
 import { AppDataSource } from '../config/database';
 import { User } from '../models/User';
 import { config } from '../config/config';
 import { loginSchema, createUserSchema } from '../validations/authValidation';
 
+const JWT_SECRET: Secret = config.jwtSecret || 'minisuper_secret_key_2024';
+const JWT_EXPIRES_IN = (process.env.JWT_EXPIRES_IN) as SignOptions["expiresIn"];
+
 export class AuthController {
-  private userRepository = AppDataSource.getRepository(User);
+  private userRepository = AppDataSource.getRepository(User);  
 
   public login = async (req: Request, res: Response) => {
     try {
@@ -34,9 +37,17 @@ export class AuthController {
       }
 
       const token = jwt.sign(
-        { userId: user.id, username: user.username, rol: user.rol },
-        config.jwtSecret,
-        { expiresIn: config.jwtExpiresIn }
+        {
+          id: user.id,
+          username: user.username,
+          role: user.rol
+        },
+        JWT_SECRET,
+        { 
+          expiresIn: JWT_EXPIRES_IN!,
+          issuer: 'minisuper',
+          audience: 'minisuper-refresh'
+        }
       );
 
       res.json({
@@ -48,7 +59,7 @@ export class AuthController {
             id: user.id,
             username: user.username,
             nombre: user.nombre,
-            rol: user.rol
+            role: user.rol
           }
         }
       });
@@ -106,7 +117,7 @@ export class AuthController {
           id: user.id,
           username: user.username,
           nombre: user.nombre,
-          rol: user.rol
+          role: user.rol
         }
       });
     } catch (error) {

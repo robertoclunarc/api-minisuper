@@ -99,6 +99,53 @@ export class ProductController {
     }
   };
 
+  public getProductById = async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+
+      const product = await this.productRepository
+        .createQueryBuilder('producto')
+        .leftJoinAndSelect('producto.categoria', 'categoria')
+        .leftJoinAndSelect('producto.proveedor', 'proveedor')
+        .leftJoinAndSelect('producto.lotes', 'lotes')
+        .where('producto.id = :id', { id })
+        .getOne();
+
+      if (!product) {
+        return res.status(404).json({
+          success: false,
+          message: 'Producto no encontrado'
+        });
+      }
+
+      // Calcular stock actual
+      const stockActual = product.lotes.reduce((total, lote) => total + lote.cantidad_actual, 0);
+      
+      // Calcular valor de inventario
+      const valorInventarioUSD = product.lotes.reduce((total, lote) => 
+        total + (lote.cantidad_actual * lote.precio_costo_usd), 0
+      );
+
+      res.json({
+        success: true,
+        data: {
+          ...product,
+          stock_actual: stockActual,
+          valor_inventario_usd: Number(valorInventarioUSD.toFixed(2)),
+          estado_stock: stockActual <= product.stock_minimo ? 'bajo' : 'normal',
+          total_lotes: product.lotes.length,
+          lotes_disponibles: product.lotes.filter(lote => lote.cantidad_actual > 0).length
+        }
+      });
+    } catch (error) {
+      console.error('Error obteniendo producto:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Error interno del servidor'
+      });
+    }
+  };
+
   public searchByBarcode = async (req: Request, res: Response) => {
     try {
       const { barcode } = req.params;
@@ -307,6 +354,231 @@ export class ProductController {
       });
     } catch (error) {
       console.error('Error obteniendo productos para POS:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Error interno del servidor'
+      });
+    }
+  };
+
+  public updateProduct = async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const { error, value } = updateProductSchema.validate(req.body);
+
+      if (error) {
+        return res.status(400).json({
+          success: false,
+          message: 'Datos de entrada inválidos',
+          errors: error.details.map(detail => detail.message)
+        });
+      }
+
+      const product = await this.productRepository.findOne({
+        where: { id: Number(id) }
+      });
+
+      if (!product) {
+        return res.status(404).json({
+          success: false,
+          message: 'Producto no encontrado'
+        });
+      }
+
+      // Verificar código de barras único si se está actualizando
+      if (value.codigo_barras && value.codigo_barras !== product.codigo_barras) {
+        const existingProduct = await this.productRepository.findOne({
+          where: { codigo_barras: value.codigo_barras }
+        });
+
+        if (existingProduct) {
+          return res.status(409).json({
+            success: false,
+            message: 'Ya existe un producto con este código de barras'
+          });
+        }
+      }
+
+      // Verificar categoría si se está actualizando
+      if (value.categoria_id) {
+        const category = await this.categoryRepository.findOne({
+          where: { id: value.categoria_id, activo: true }
+        });
+
+        if (!category) {
+          return res.status(404).json({
+            success: false,
+            message: 'Categoría no encontrada'
+          });
+        }
+      }
+
+      // Verificar proveedor si se está actualizando
+      if (value.proveedor_id) {
+        const provider = await this.providerRepository.findOne({
+          where: { id: value.proveedor_id, activo: true }
+        });
+
+        if (!provider) {
+          return res.status(404).json({
+            success: false,
+            message: 'Proveedor no encontrado'
+          });
+        }
+      }
+
+      await this.productRepository.update(Number(id), value);
+
+      const updatedProduct = await this.productRepository.findOne({
+        where: { id: Number(id) },
+        relations: ['categoria', 'proveedor']
+      });
+
+      res.json({
+        success: true,
+        message: 'Producto actualizado exitosamente',
+        data: updatedProduct
+      });
+    } catch (error) {
+      console.error('Error actualizando producto:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Error interno del servidor'
+      });
+    }
+  };
+
+  public deleteProduct = async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+
+      const product = await this.productRepository.findOne({
+        where: { id: Number(id) },
+        relations: ['lotes', 'detalles_venta']
+      });
+
+      if (!product) {
+        return res.status(404).json({
+          success: false,
+          message: 'Producto no encontrado'
+        });
+      }
+
+      // Verificar si el producto tiene stock
+      const stockActual = product.lotes.reduce((total, lote) => total + lote.cantidad_actual, 0);
+      
+      if (stockActual > 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'No se puede eliminar el producto porque tiene stock disponible'
+        });
+      }
+
+      // Verificar si el producto ha sido vendido
+      if (product.detalles_venta && product.detalles_venta.length > 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'No se puede eliminar el producto porque tiene historial de ventas'
+        });
+      }
+
+      // Soft delete - marcar como inactivo
+      await this.productRepository.update(Number(id), { activo: false });
+
+      res.json({
+        success: true,
+        message: 'Producto eliminado exitosamente'
+      });
+    } catch (error) {
+      console.error('Error eliminando producto:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Error interno del servidor'
+      });
+    }
+  };
+
+  public getProductByBarcode = async (req: Request, res: Response) => {
+    try {
+      const { barcode } = req.params;
+
+      const product = await this.productRepository
+        .createQueryBuilder('producto')
+        .leftJoinAndSelect('producto.categoria', 'categoria')
+        .leftJoinAndSelect('producto.proveedor', 'proveedor')
+        .leftJoinAndSelect('producto.lotes', 'lotes')
+        .where('producto.codigo_barras = :barcode', { barcode })
+        .andWhere('producto.activo = :activo', { activo: true })
+        .getOne();
+
+      if (!product) {
+        return res.status(404).json({
+          success: false,
+          message: 'Producto no encontrado'
+        });
+      }
+
+      // Calcular stock disponible
+      const stockDisponible = product.lotes
+        .filter(lote => lote.cantidad_actual > 0)
+        .reduce((total, lote) => total + lote.cantidad_actual, 0);
+
+      if (stockDisponible === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Producto sin stock disponible'
+        });
+      }
+
+      res.json({
+        success: true,
+        data: {
+          ...product,
+          stock_disponible: stockDisponible,
+          puede_venderse: stockDisponible > 0
+        }
+      });
+    } catch (error) {
+      console.error('Error buscando producto por código:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Error interno del servidor'
+      });
+    }
+  };
+
+  public getLowStockProducts = async (req: Request, res: Response) => {
+    try {
+      const products = await this.productRepository
+        .createQueryBuilder('producto')
+        .leftJoinAndSelect('producto.categoria', 'categoria')
+        .leftJoinAndSelect('producto.proveedor', 'proveedor')
+        .leftJoin('producto.lotes', 'lotes')
+        .addSelect('COALESCE(SUM(lotes.cantidad_actual), 0)', 'stock_actual')
+        .where('producto.activo = :activo', { activo: true })
+        .groupBy('producto.id')
+        .addGroupBy('categoria.id')
+        .addGroupBy('proveedor.id')
+        .having('COALESCE(SUM(lotes.cantidad_actual), 0) <= producto.stock_minimo')
+        .orderBy('stock_actual', 'ASC')
+        .getRawAndEntities();
+
+      const lowStockProducts = products.entities.map((product, index) => ({
+        ...product,
+        stock_actual: Number(products.raw[index].stock_actual),
+        diferencia_stock: Number(products.raw[index].stock_actual) - product.stock_minimo
+      }));
+
+      res.json({
+        success: true,
+        data: {
+          productos_stock_bajo: lowStockProducts,
+          total_productos: lowStockProducts.length,
+          productos_sin_stock: lowStockProducts.filter(p => p.stock_actual === 0).length
+        }
+      });
+    } catch (error) {
+      console.error('Error obteniendo productos con stock bajo:', error);
       res.status(500).json({
         success: false,
         message: 'Error interno del servidor'

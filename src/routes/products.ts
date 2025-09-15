@@ -32,4 +32,7 @@ router.delete('/:id',
   productController.deleteProduct
 );
 
+router.get('/barcode/:barcode', authenticateToken, productController.getProductByBarcode);
+router.get('/low-stock', authenticateToken, productController.getLowStockProducts);
+
 export default router;

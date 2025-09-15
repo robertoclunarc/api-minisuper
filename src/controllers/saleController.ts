@@ -179,7 +179,7 @@ export class SaleController {
 
       // Crear la venta
       const sale = queryRunner.manager.create(Sale, {
-        numero_venta: await this.generateSaleNumber(),
+        numero_factura: await this.generateSaleNumber(),
         usuario_id: req.user!.id,
         caja_id: caja_id,
         cierre_caja_id: openCash.id,
@@ -593,7 +593,7 @@ export class SaleController {
         message: 'Venta cancelada exitosamente',
         data: {
           venta_id: sale.id,
-          //numero_venta: sale.numero_venta,
+          numero_factura: sale.numero_factura,
           monto_reembolsado_usd: sale.total_usd,
           monto_reembolsado_ves: sale.total_ves,
           motivo,
@@ -624,13 +624,13 @@ export class SaleController {
     
     const lastSale = await this.saleRepository
       .createQueryBuilder('venta')
-      .where('venta.numero_venta LIKE :prefix', { prefix: `${prefix}%` })
-      .orderBy('venta.numero_venta', 'DESC')
+      .where('venta.numero_factura LIKE :prefix', { prefix: `${prefix}%` })
+      .orderBy('venta.numero_factura', 'DESC')
       .getOne();
 
     let sequence = 1;
     if (lastSale) {
-      const lastSequence = parseInt(lastSale.numero_venta.substring(8));
+      const lastSequence = parseInt(lastSale.numero_factura.substring(8));
       sequence = lastSequence + 1;
     }
 

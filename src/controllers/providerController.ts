@@ -138,7 +138,7 @@ export class ProviderController {
         });
       }
 
-      await this.providerRepository.update(id, value);
+      await this.providerRepository.update(Number(id), value);
 
       const updatedProvider = await this.providerRepository.findOne({
         where: { id: Number(id) }
@@ -174,7 +174,7 @@ export class ProviderController {
       }
 
       // Soft delete
-      await this.providerRepository.update(id, { activo: false });
+      await this.providerRepository.update(Number(id), { activo: false });
 
       res.json({
         success: true,

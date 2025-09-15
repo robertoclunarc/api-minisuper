@@ -63,6 +63,11 @@ app.use('/api/inventory', inventoryRoutes);
 app.use('/api/sales', saleRoutes);
 app.use('/api/reports', reportRoutes);
 
+app.use('/api/currency', currencyRoutes);
+app.use('/api/provider', providerRoutes);
+app.use('/api/categories', categoryRoutes);
+app.use('/api/cashregister', cashRegisterRoutes);
+
 // Middleware de manejo de errores
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
   console.error('Error no manejado:', err);

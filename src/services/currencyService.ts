@@ -1,5 +1,7 @@
+import { config } from '../config/config';
 import { AppDataSource } from '../config/database';
 import { ExchangeRate } from '../models/ExchangeRate';
+import axios from "axios";
 
 export interface PyDolarResponse {
   datetime: string;
@@ -17,29 +19,41 @@ export interface PyDolarResponse {
 
 export class CurrencyService {
   private exchangeRateRepository = AppDataSource.getRepository(ExchangeRate);
-  private readonly PYDOLAR_API = 'http://pydolarve.org/api/v1/dollar';
+  private readonly PYDOLAR_API = config.urlApiDolar || 'https://ve.dolarapi.com/v1/dolares/oficial';
 
   /**
    * Obtiene la tasa de cambio actual del BCV desde PyDolar
    */
   public async fetchCurrentExchangeRate(): Promise<number> {
+    const options = {
+            method: 'GET',
+            url: this.PYDOLAR_API,
+            headers: {'Content-Type': 'application/json'}
+          };
+    const today = new Date().toISOString().split('T')[0] || '';      
     try {
-      const response = await fetch(this.PYDOLAR_API, {
-        method: 'GET',
-        timeout: 10000, // 10 segundos timeout
-        headers: {
-          'User-Agent': 'MiniSuper-System/1.0'
-        }
-      });
+      const response = await axios.request(options);
 
-      if (!response.ok) {
+      if (!response.data) {
         throw new Error(`Error HTTP: ${response.status}`);
       }
 
-      const data: PyDolarResponse = await response.json();
+      const data: PyDolarResponse = {
+        datetime: today,
+        monitors: {
+          bcv: {
+            price: response.data.promedio,
+            last_update: response.data.fechaActualizacion
+          },
+          dolartoday: {
+            price: response.data.promedio,
+            last_update: response.data.fechaActualizacion
+          }
+        }
+      }
       
       if (!data.monitors?.bcv?.price) {
-        throw new Error('Respuesta inválida de PyDolar API');
+        throw new Error(`Respuesta inválida de ${this.PYDOLAR_API}`);
       }
 
       const tasa = data.monitors.bcv.price;
@@ -68,7 +82,7 @@ export class CurrencyService {
    */
   private async saveExchangeRate(tasaBcv: number, tasaParalelo: number | null): Promise<void> {
     try {
-      const today = new Date().toISOString().split('T')[0];
+      const today = new Date().toISOString().split('T')[0] || '';
       
       // Verificar si ya existe una tasa para hoy
       const existingRate = await this.exchangeRateRepository.findOne({
@@ -79,7 +93,7 @@ export class CurrencyService {
         // Actualizar tasa existente
         await this.exchangeRateRepository.update(existingRate.id, {
           tasa_bcv: tasaBcv,
-          tasa_paralelo: tasaParalelo,
+          tasa_paralelo: tasaParalelo ?? 0,
           created_at: new Date()
         });
       } else {
@@ -87,8 +101,8 @@ export class CurrencyService {
         const newRate = this.exchangeRateRepository.create({
           fecha: new Date(today),
           tasa_bcv: tasaBcv,
-          tasa_paralelo: tasaParalelo,
-          fuente: 'pydolar'
+          tasa_paralelo: tasaParalelo ?? 0,
+          fuente: this.PYDOLAR_API
         });
         
         await this.exchangeRateRepository.save(newRate);
@@ -140,7 +154,7 @@ export class CurrencyService {
     const today = new Date().toISOString().split('T')[0];
     
     // Intentar obtener tasa de hoy desde la base de datos
-    const todayRate = await this.getExchangeRateByDate(today);
+    const todayRate = await this.getExchangeRateByDate(today?.toString() || '');
     
     if (todayRate) {
       return todayRate.tasa_bcv;
@@ -172,7 +186,7 @@ export class CurrencyService {
       const newRate = this.exchangeRateRepository.create({
         fecha: new Date(fecha),
         tasa_bcv: tasaBcv,
-        tasa_paralelo: tasaParalelo,
+        tasa_paralelo: tasaParalelo || 0,
         fuente: 'manual'
       });
       
