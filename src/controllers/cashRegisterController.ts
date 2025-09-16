@@ -91,7 +91,7 @@ export class CashRegisterController {
 
       // Obtener tasa de cambio actual
       const exchangeRate = await this.currencyService.getCurrentExchangeRate();
-
+      console.log('Tasa de cambio actual al abrir caja:', exchangeRate);
       const cashClose = this.cashCloseRepository.create({
         caja_id,
         usuario_id: req.user!.id,

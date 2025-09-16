@@ -126,9 +126,12 @@ export class CurrencyService {
    * Obtiene la tasa de cambio para una fecha específica
    */
   public async getExchangeRateByDate(fecha: string): Promise<ExchangeRate | null> {
-    return await this.exchangeRateRepository.findOne({
+    console.log('Buscando tasa para la fecha:', fecha);
+    const response = await this.exchangeRateRepository.findOne({
       where: { fecha: new Date(fecha) }
     });
+    console.log('Tasa encontrada:', response);
+    return response;
   }
 
   /**

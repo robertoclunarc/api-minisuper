@@ -66,7 +66,7 @@ app.use('/api/reports', reportRoutes);
 app.use('/api/currency', currencyRoutes);
 app.use('/api/provider', providerRoutes);
 app.use('/api/categories', categoryRoutes);
-app.use('/api/cashregister', cashRegisterRoutes);
+app.use('/api/cash-registers', cashRegisterRoutes);
 
 // Middleware de manejo de errores
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
