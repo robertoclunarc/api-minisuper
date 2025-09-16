@@ -66,13 +66,13 @@ export class CashRegisterController {
           estado: CashRegisterStatus.OPEN 
         }
       });
-
-      if (existingOpen) {
+      console.log('Caja abierta existente para el usuario:', existingOpen, req.user!.id);
+      /*if (existingOpen) {
         return res.status(400).json({
           success: false,
           message: 'Ya tienes una caja abierta. Debes cerrarla antes de abrir otra.'
         });
-      }
+      }*/
 
       // Verificar que esta caja no esté abierta por otro usuario
       const cajaAbierta = await this.cashCloseRepository.findOne({
@@ -196,7 +196,14 @@ export class CashRegisterController {
   };
 
   public getCashRegisterStatus = async (req: AuthRequest, res: Response) => {
+    
     try {
+      if (!req.user) {
+        return res.status(200).json({
+          success: false,
+          message: 'No autenticado'
+        });
+      }
       const openCash = await this.cashCloseRepository.findOne({
         where: { 
           usuario_id: req.user!.id,

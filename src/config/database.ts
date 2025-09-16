@@ -8,6 +8,7 @@ import { CashRegister } from '../models/CashRegister';
 import { CashRegisterClose } from '../models/CashRegisterClose';
 import { Sale } from '../models/Sale';
 import { SaleDetail } from '../models/SaleDetail';
+import { ExchangeRate } from '../models/ExchangeRate';
 
 export const AppDataSource = new DataSource({
   type: 'mysql',
@@ -27,7 +28,8 @@ export const AppDataSource = new DataSource({
     CashRegister,
     CashRegisterClose,
     Sale,
-    SaleDetail
+    SaleDetail,
+    ExchangeRate
   ],
   migrations: ['src/migrations/*.ts'],
   charset: 'utf8mb4'

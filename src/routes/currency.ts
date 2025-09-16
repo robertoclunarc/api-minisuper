@@ -7,7 +7,7 @@ const router = Router();
 const currencyController = new CurrencyController();
 
 // Rutas públicas para cajeros
-router.get('/current', authenticateToken, currencyController.getCurrentRate);
+router.get('/current', /*authenticateToken,*/ currencyController.getCurrentRate);
 router.get('/convert', authenticateToken, currencyController.convertCurrency);
 router.post('/refresh', authenticateToken, currencyController.refreshRate);
 

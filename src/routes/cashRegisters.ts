@@ -8,7 +8,7 @@ const cashRegisterController = new CashRegisterController();
 
 // Rutas para cajeros y administradores
 router.get('/', authenticateToken, cashRegisterController.getCashRegisters);
-router.get('/status', authenticateToken, cashRegisterController.getCashRegisterStatus);
+router.get('/status', /*authenticateToken,*/ cashRegisterController.getCashRegisterStatus);
 router.post('/open', authenticateToken, cashRegisterController.openCashRegister);
 router.post('/close', authenticateToken, cashRegisterController.closeCashRegister);
 
