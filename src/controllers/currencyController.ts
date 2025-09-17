@@ -90,10 +90,13 @@ export class CurrencyController {
         });
       }
 
-      const history = await this.currencyService.getExchangeRateHistory(
-        fecha_inicio as string,
-        fecha_fin as string
-      );
+      // Calculate number of days between fecha_inicio and fecha_fin
+      const startDate = new Date(fecha_inicio as string);
+      const endDate = new Date(fecha_fin as string);
+      const diffTime = Math.abs(endDate.getTime() - startDate.getTime());
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
+
+      const history = await this.currencyService.getExchangeRateHistory(diffDays);
 
       res.json({
         success: true,

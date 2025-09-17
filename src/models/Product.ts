@@ -1,4 +1,4 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, ManyToOne, OneToMany, JoinColumn } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, ManyToOne, OneToMany, JoinColumn, BeforeInsert, BeforeUpdate } from 'typeorm';
 import { Category } from './Category';
 import { Provider } from './Provider';
 import { InventoryBatch } from './InventoryBatch';
@@ -92,21 +92,25 @@ export class Product {
     return Number((this.precio_costo_usd * exchangeRate).toFixed(2));
   }
 
-  getFormattedPrices(exchangeRate: number) {
+  getFormattedPrices(exchangeRate: number = 1) {
+    // Convertir a número por si acaso viene como string desde la BD
+    const priceUSD = Number(this.precio_venta_usd) || 0;
+    const costUSD = Number(this.precio_costo_usd) || 0;
+    
     return {
-      usd: {
-        venta: this.precio_venta_usd,
-        costo: this.precio_costo_usd,
-        formatted_venta: `$${this.precio_venta_usd.toFixed(2)}`,
-        formatted_costo: `$${this.precio_costo_usd.toFixed(2)}`
-      },
-      ves: {
-        venta: this.getPriceInVes(exchangeRate),
-        costo: this.getCostInVes(exchangeRate),
-        formatted_venta: `Bs. ${this.getPriceInVes(exchangeRate).toLocaleString('es-VE')}`,
-        formatted_costo: `Bs. ${this.getCostInVes(exchangeRate).toLocaleString('es-VE')}`
-      },
-      exchange_rate: exchangeRate
+      precio_venta_usd: Number(priceUSD.toFixed(2)),
+      precio_venta_ves: Number((priceUSD * exchangeRate).toFixed(2)),
+      precio_costo_usd: Number(costUSD.toFixed(2)),
+      precio_costo_ves: Number((costUSD * exchangeRate).toFixed(2)),
+      margen_ganancia: costUSD > 0 ? Number(((priceUSD - costUSD) / costUSD * 100).toFixed(2)) : 0
     };
+  }
+
+  @BeforeInsert()
+  @BeforeUpdate()
+  validatePrices() {
+    this.precio_venta_usd = Number(this.precio_venta_usd) || 0;
+    this.precio_costo_usd = Number(this.precio_costo_usd) || 0;
+    this.stock_minimo = Number(this.stock_minimo) || 0;
   }
 }

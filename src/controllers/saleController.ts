@@ -86,7 +86,8 @@ export class SaleController {
           .createQueryBuilder('lote')
           .where('lote.producto_id = :producto_id', { producto_id: item.producto_id })
           .andWhere('lote.cantidad_actual > 0')
-          .orderBy('lote.fecha_vencimiento', 'ASC', 'NULLS LAST')
+          .orderBy('ISNULL(lote.fecha_vencimiento)', 'ASC') // NULL al final
+          .addOrderBy('lote.fecha_vencimiento', 'ASC')
           .addOrderBy('lote.fecha_ingreso', 'ASC')
           .getMany();
 
@@ -196,7 +197,7 @@ export class SaleController {
         monto_recibido_ves,
         cambio_usd: cambioUSD,
         cambio_ves: cambioVES,
-        tasa_cambio: exchangeRate,
+        tasa_cambio_venta: exchangeRate,
         estado: SaleStatus.COMPLETED
       });
 

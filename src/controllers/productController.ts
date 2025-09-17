@@ -15,89 +15,90 @@ export class ProductController {
   private currencyService = new CurrencyService();
 
   public getProducts = async (req: Request, res: Response) => {
-    try {
-      const { 
-        page = 1, 
-        limit = 50, 
-        search, 
-        categoria_id, 
-        proveedor_id,
-        low_stock = false 
-      } = req.query;
+  try {
+    const { 
+      page = 1, 
+      limit = 50, 
+      search, 
+      categoria_id, 
+      proveedor_id,
+      activo = true 
+    } = req.query;
 
-      const skip = (Number(page) - 1) * Number(limit);
-      const queryBuilder = this.productRepository
-        .createQueryBuilder('producto')
-        .leftJoinAndSelect('producto.categoria', 'categoria')
-        .leftJoinAndSelect('producto.proveedor', 'proveedor')
-        .leftJoinAndSelect('producto.lotes', 'lotes')
-        .where('producto.activo = :activo', { activo: true });
+    const skip = (Number(page) - 1) * Number(limit);
+    
+    // ✅ CONSULTA SIMPLIFICADA SIN getFormattedPrices
+    const queryBuilder = this.productRepository
+      .createQueryBuilder('producto')
+      .leftJoinAndSelect('producto.categoria', 'categoria')
+      .leftJoinAndSelect('producto.proveedor', 'proveedor')
+      .leftJoin('producto.lotes', 'lotes')
+      .addSelect('COALESCE(SUM(lotes.cantidad_actual), 0)', 'stock_actual')
+      .where('producto.activo = :activo', { activo })
+      .groupBy('producto.id')
+      .addGroupBy('categoria.id')
+      .addGroupBy('proveedor.id');
 
-      // Filtros existentes...
-      if (search) {
-        queryBuilder.andWhere(
-          '(producto.codigo_barras LIKE :search OR producto.codigo_interno LIKE :search OR producto.nombre LIKE :search OR producto.descripcion LIKE :search)',
-          { search: `%${search}%` }
-        );
-      }
-
-      if (categoria_id) {
-        queryBuilder.andWhere('producto.categoria_id = :categoria_id', { categoria_id });
-      }
-
-      if (proveedor_id) {
-        queryBuilder.andWhere('producto.proveedor_id = :proveedor_id', { proveedor_id });
-      }
-
-      const [products, total] = await queryBuilder
-        .skip(skip)
-        .take(Number(limit))
-        .getManyAndCount();
-
-      // Obtener tasa de cambio actual
-      const exchangeRate = await this.currencyService.getCurrentExchangeRate();
-
-      // Procesar productos con precios en ambas monedas
-      const productsWithPrices = products.map(product => {
-        const stock_total = product.lotes?.reduce((total, lote) => total + lote.cantidad_actual, 0) || 0;
-        
-        return {
-          ...product,
-          stock_total,
-          precios: product.getFormattedPrices(exchangeRate),
-          stock_status: stock_total <= product.stock_minimo ? 'bajo' : 'normal'
-        };
-      });
-
-      // Filtrar productos con stock bajo si se solicita
-      let filteredProducts = productsWithPrices;
-      if (low_stock === 'true') {
-        filteredProducts = productsWithPrices.filter(product => 
-          product.stock_total <= product.stock_minimo
-        );
-      }
-
-      res.json({
-        success: true,
-        data: {
-          products: filteredProducts,
-          exchange_rate: exchangeRate,
-          pagination: {
-            current_page: Number(page),
-            total_pages: Math.ceil(total / Number(limit)),
-            total_items: total,
-            items_per_page: Number(limit)
-          }
-        }
-      });
-    } catch (error) {
-      console.error('Error obteniendo productos:', error);
-      res.status(500).json({
-        success: false,
-        message: 'Error interno del servidor'
-      });
+    if (search) {
+      queryBuilder.andWhere(
+        '(producto.codigo_barras LIKE :search OR producto.codigo_interno LIKE :search OR producto.nombre LIKE :search)',
+        { search: `%${search}%` }
+      );
     }
-  };
+
+    if (categoria_id) {
+      queryBuilder.andWhere('producto.categoria_id = :categoria_id', { categoria_id });
+    }
+
+    if (proveedor_id) {
+      queryBuilder.andWhere('producto.proveedor_id = :proveedor_id', { proveedor_id });
+    }
+
+    const { entities, raw } = await queryBuilder
+      .skip(skip)
+      .take(Number(limit))
+      .orderBy('producto.nombre', 'ASC')
+      .getRawAndEntities();
+
+    // ✅ MAPEAR RESULTADOS MANUALMENTE Y ASEGURAR TIPOS
+    const products = entities.map((product, index) => {
+      const stockActual = Number(raw[index]?.stock_actual) || 0;
+      
+      return {
+        ...product,
+        // Asegurar que los precios sean números
+        precio_venta_usd: Number(product.precio_venta_usd),
+        precio_costo_usd: Number(product.precio_costo_usd),
+        stock_minimo: Number(product.stock_minimo),
+        stock_actual: stockActual
+      };
+    });
+
+    console.log('✅ Products found:', products.length);
+
+    // Obtener el total de productos (sin paginación)
+    const total = await queryBuilder.getCount();
+
+    res.json({
+      success: true,
+      data: {
+        products,
+        pagination: {
+          current_page: Number(page),
+          total_pages: Math.ceil(total / Number(limit)),
+          total_items: total,
+          items_per_page: Number(limit)
+        }
+      }
+    });
+  } catch (error) {
+    console.error('❌ Error obteniendo productos:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error interno del servidor'
+    });
+  }
+};
 
   public getProductById = async (req: Request, res: Response) => {
     try {

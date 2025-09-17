@@ -40,27 +40,27 @@ export class AuthController {
         {
           id: user.id,
           username: user.username,
-          role: user.rol
+          rol: user.rol
         },
         JWT_SECRET,
         { 
           expiresIn: JWT_EXPIRES_IN!,
-          issuer: 'minisuper',
+          issuer: 'api-minisuper',
           audience: 'minisuper-refresh'
         }
       );
+
+      console.log('🔐 Login successful for user:', { id: user.id, username: user.username }); // Para debug
+
+      // Respuesta sin incluir la contraseña
+      const { password: _, ...userWithoutPassword } = user;
 
       res.json({
         success: true,
         message: 'Login exitoso',
         data: {
           token,
-          user: {
-            id: user.id,
-            username: user.username,
-            nombre: user.nombre,
-            role: user.rol
-          }
+          user: userWithoutPassword
         }
       });
     } catch (error) {

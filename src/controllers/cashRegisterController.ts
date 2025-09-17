@@ -47,6 +47,14 @@ export class CashRegisterController {
         observaciones 
       } = req.body;
 
+      console.log('🔓 Opening cash register request:', {
+        caja_id,
+        monto_inicial_usd,
+        monto_inicial_ves,
+        user_id: req.user?.id,      // ✅ LOG DEL USER ID
+        username: req.user?.username // ✅ LOG DEL USERNAME
+      });
+
       // Verificar que la caja existe
       const cashRegister = await this.cashRegisterRepository.findOne({
         where: { id: caja_id, activo: true }
@@ -59,20 +67,35 @@ export class CashRegisterController {
         });
       }
 
+      // ✅ VERIFICAR QUE req.user EXISTE
+      if (!req.user) {
+        return res.status(401).json({
+          success: false,
+          message: 'Usuario no autenticado'
+        });
+      }
+
+      console.log('👤 User trying to open cash:', { 
+        id: req.user.id, 
+        username: req.user.username 
+      });
+
       // Verificar que no hay una caja ya abierta para este usuario
       const existingOpen = await this.cashCloseRepository.findOne({
         where: { 
-          usuario_id: req.user!.id,
+          usuario_id: req.user.id,    // ✅ USAR EL ID CORRECTO
           estado: CashRegisterStatus.OPEN 
         }
       });
-      console.log('Caja abierta existente para el usuario:', existingOpen, req.user!.id);
-      /*if (existingOpen) {
+
+      console.log('🔍 Existing open cash for user:', existingOpen);
+
+      if (existingOpen) {
         return res.status(400).json({
           success: false,
           message: 'Ya tienes una caja abierta. Debes cerrarla antes de abrir otra.'
         });
-      }*/
+      }
 
       // Verificar que esta caja no esté abierta por otro usuario
       const cajaAbierta = await this.cashCloseRepository.findOne({
@@ -81,6 +104,8 @@ export class CashRegisterController {
           estado: CashRegisterStatus.OPEN 
         }
       });
+
+      console.log('🔍 Cash register status:', cajaAbierta);
 
       if (cajaAbierta) {
         return res.status(400).json({
@@ -91,15 +116,21 @@ export class CashRegisterController {
 
       // Obtener tasa de cambio actual
       const exchangeRate = await this.currencyService.getCurrentExchangeRate();
-      console.log('Tasa de cambio actual al abrir caja:', exchangeRate);
+
       const cashClose = this.cashCloseRepository.create({
         caja_id,
-        usuario_id: req.user!.id,
+        usuario_id: req.user.id,    // ✅ USAR EL ID CORRECTO
         monto_inicial_usd,
         monto_inicial_ves,
         tasa_cambio_apertura: exchangeRate,
         estado: CashRegisterStatus.OPEN,
         observaciones
+      });
+
+      console.log('💾 Creating cash close record:', {
+        caja_id: cashClose.caja_id,
+        usuario_id: cashClose.usuario_id,
+        estado: cashClose.estado
       });
 
       await this.cashCloseRepository.save(cashClose);
@@ -111,13 +142,15 @@ export class CashRegisterController {
         .where('cierre.id = :id', { id: cashClose.id })
         .getOne();
 
+      console.log('✅ Cash register opened successfully:', savedCashClose);
+
       res.status(201).json({
         success: true,
         message: 'Caja abierta exitosamente',
         data: savedCashClose
       });
     } catch (error) {
-      console.error('Error abriendo caja:', error);
+      console.error('❌ Error abriendo caja:', error);
       res.status(500).json({
         success: false,
         message: 'Error interno del servidor'
@@ -196,21 +229,28 @@ export class CashRegisterController {
   };
 
   public getCashRegisterStatus = async (req: AuthRequest, res: Response) => {
-    
     try {
+      console.log('📊 Getting cash register status for user:', {
+        id: req.user?.id,
+        username: req.user?.username
+      });
+
       if (!req.user) {
-        return res.status(200).json({
+        return res.status(401).json({
           success: false,
-          message: 'No autenticado'
+          message: 'Usuario no autenticado'
         });
       }
+
       const openCash = await this.cashCloseRepository.findOne({
         where: { 
-          usuario_id: req.user!.id,
+          usuario_id: req.user.id,    // ✅ USAR EL ID CORRECTO
           estado: CashRegisterStatus.OPEN 
         },
         relations: ['caja', 'usuario']
       });
+
+      console.log('🔍 Found open cash for user:', openCash);
 
       res.json({
         success: true,
@@ -220,7 +260,7 @@ export class CashRegisterController {
         }
       });
     } catch (error) {
-      console.error('Error obteniendo estado de caja:', error);
+      console.error('❌ Error obteniendo estado de caja:', error);
       res.status(500).json({
         success: false,
         message: 'Error interno del servidor'

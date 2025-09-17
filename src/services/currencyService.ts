@@ -154,17 +154,65 @@ export class CurrencyService {
    * Obtiene la tasa de cambio actual (desde caché o API)
    */
   public async getCurrentExchangeRate(): Promise<number> {
-    const today = new Date().toISOString().split('T')[0];
-    
-    // Intentar obtener tasa de hoy desde la base de datos
-    const todayRate = await this.getExchangeRateByDate(today?.toString() || '');
-    
-    if (todayRate) {
-      return todayRate.tasa_bcv;
-    }
+    try {
+      // Intentar obtener la tasa de hoy desde la BD
+      const today = new Date().toISOString().split('T')[0]  || '';
+      
+      let exchangeRate = await this.exchangeRateRepository.findOne({
+        where: { fecha: new Date(today) }
+      });
 
-    // Si no hay tasa de hoy, obtener desde API
-    return await this.fetchCurrentExchangeRate();
+      if (!exchangeRate) {
+        // Si no existe, obtener desde la API externa
+        exchangeRate = await this.fetchAndSaveExchangeRate();
+      }
+
+      return exchangeRate?.tasa_bcv || 1;
+    } catch (error) {
+      console.error('Error obteniendo tasa de cambio:', error);
+      return 1; // Valor por defecto
+    }
+  }
+
+  private async fetchAndSaveExchangeRate(): Promise<ExchangeRate | null> {
+    try {
+      console.log('📡 Fetching exchange rate from external API...');
+      
+      const response = await axios.get('https://ve.dolarapi.com/v1/dolares/oficial', {
+        timeout: 5000
+      });
+
+      if (response.data && response.data.promedio) {
+        const rate = response.data.promedio;
+        const today = new Date().toISOString().split('T')[0]  || '';
+
+        // ✅ USAR upsert PARA EVITAR DUPLICADOS
+        const exchangeRate = await this.exchangeRateRepository
+          .createQueryBuilder()
+          .insert()
+          .into(ExchangeRate)
+          .values({
+            fecha: today,
+            tasa_bcv: rate,
+            tasa_paralelo: rate,
+            fuente: 'https://ve.dolarapi.com/v1/dolares/oficial'
+          })
+          .orUpdate(['tasa_bcv', 'tasa_paralelo', 'fuente'], ['fecha'])
+          .execute();
+
+        console.log('✅ Exchange rate saved/updated:', rate);
+
+        // Retornar el registro actualizado
+        return await this.exchangeRateRepository.findOne({
+          where: { fecha: new Date(today) }
+        });
+      }
+
+      return null;
+    } catch (error) {
+      console.error('❌ Error fetching external exchange rate:', error);
+      return null;
+    }
   }
 
   /**
@@ -200,16 +248,19 @@ export class CurrencyService {
   /**
    * Obtiene el historial de tasas de cambio
    */
-  public async getExchangeRateHistory(
-    fechaInicio: string, 
-    fechaFin: string
-  ): Promise<ExchangeRate[]> {
-    return await this.exchangeRateRepository
-      .createQueryBuilder('tasa')
-      .where('tasa.fecha >= :fechaInicio', { fechaInicio })
-      .andWhere('tasa.fecha <= :fechaFin', { fechaFin })
-      .orderBy('tasa.fecha', 'DESC')
-      .getMany();
+  public async getExchangeRateHistory(days: number = 30) {
+    try {
+      const rates = await this.exchangeRateRepository
+        .createQueryBuilder('rate')
+        .orderBy('rate.fecha', 'DESC')
+        .limit(days)
+        .getMany();
+
+      return rates;
+    } catch (error) {
+      console.error('Error obteniendo historial de tasas:', error);
+      return [];
+    }
   }
 
   /**

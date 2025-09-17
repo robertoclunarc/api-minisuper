@@ -142,4 +142,8 @@ export class Sale {
       estado: this.estado
     };
   }
+
+  get tasa_cambio(): number {
+    return this.tasa_cambio_venta; // Alias para compatibilidad
+  }
 }
