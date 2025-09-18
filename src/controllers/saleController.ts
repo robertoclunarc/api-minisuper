@@ -235,7 +235,10 @@ export class SaleController {
         success: true,
         message: 'Venta creada exitosamente',
         data: {
-          venta: completeSale,
+          venta: {
+            ...completeSale,
+            id: savedSale.id, // Asegurar que el ID esté presente
+          },
           cambio: {
             usd: cambioUSD,
             ves: cambioVES
@@ -470,7 +473,7 @@ export class SaleController {
           rif: 'RIF de la empresa'
         },
         venta: {
-          numero: sale.caja_id,
+          numero: sale.numero_factura,
           fecha: sale.fecha_venta,
           cajero: sale.usuario.nombre,
           caja: sale.caja.nombre
@@ -478,29 +481,32 @@ export class SaleController {
         items: sale.detalles.map(detail => ({
           codigo: detail.producto.codigo_barras,
           nombre: detail.producto.nombre,
-          cantidad: detail.cantidad,
-          precio_unitario_usd: detail.precio_unitario_usd,
-          precio_unitario_ves: detail.precio_unitario_ves,
-          subtotal_usd: detail.subtotal_usd,
-          subtotal_ves: detail.subtotal_ves
+          cantidad: Number(detail.cantidad),
+          // ✅ ASEGURAR QUE SEAN NÚMEROS
+          precio_unitario_usd: Number(detail.precio_unitario_usd),
+          precio_unitario_ves: Number(detail.precio_unitario_ves),
+          subtotal_usd: Number(detail.subtotal_usd),
+          subtotal_ves: Number(detail.subtotal_ves)
         })),
         totales: {
-          subtotal_usd: sale.subtotal_usd,
-          subtotal_ves: sale.subtotal_ves,
-          descuento_usd: sale.descuento_usd,
-          descuento_ves: sale.descuento_ves,
-          impuesto_usd: sale.impuesto_usd,
-          impuesto_ves: sale.impuesto_ves,
-          total_usd: sale.total_usd,
-          total_ves: sale.total_ves
+          // ✅ ASEGURAR QUE SEAN NÚMEROS
+          subtotal_usd: Number(sale.subtotal_usd),
+          subtotal_ves: Number(sale.subtotal_ves),
+          descuento_usd: Number(sale.descuento_usd),
+          descuento_ves: Number(sale.descuento_ves),
+          impuesto_usd: Number(sale.impuesto_usd),
+          impuesto_ves: Number(sale.impuesto_ves),
+          total_usd: Number(sale.total_usd),
+          total_ves: Number(sale.total_ves)
         },
         pago: {
           metodo: sale.metodo_pago,
-          recibido_usd: sale.monto_recibido_usd,
-          recibido_ves: sale.monto_recibido_ves,
-          cambio_usd: sale.cambio_usd,
-          cambio_ves: sale.cambio_ves,
-          tasa_cambio: sale.cambio_ves
+          // ✅ ASEGURAR QUE SEAN NÚMEROS
+          recibido_usd: Number(sale.monto_recibido_usd),
+          recibido_ves: Number(sale.monto_recibido_ves),
+          cambio_usd: Number(sale.cambio_usd),
+          cambio_ves: Number(sale.cambio_ves),
+          tasa_cambio: Number(sale.tasa_cambio_venta || sale.tasa_cambio || 1)
         },
         footer: {
           mensaje: 'Gracias por su compra',
@@ -508,6 +514,7 @@ export class SaleController {
         }
       };
 
+      console.log('🧾 Generated receipt data:', receipt);
       res.json({
         success: true,
         data: receipt
