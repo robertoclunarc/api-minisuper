@@ -1,5 +1,33 @@
 import Joi from 'joi';
 
+export const paymentDetailSchema = Joi.object({
+  metodo_pago: Joi.string().valid(
+    'efectivo_usd', 
+    'efectivo_ves', 
+    'tarjeta', 
+    'transferencia', 
+    'pago_movil'
+  ).required().messages({
+    'any.only': 'Método de pago inválido',
+    'any.required': 'El método de pago es requerido'
+  }),
+  monto_usd: Joi.number().min(0).precision(2).default(0).messages({
+    'number.base': 'El monto en USD debe ser un número válido',
+    'number.min': 'El monto en USD no puede ser negativo'
+  }),
+  monto_ves: Joi.number().min(0).precision(2).default(0).messages({
+    'number.base': 'El monto en VES debe ser un número válido',
+    'number.min': 'El monto en VES no puede ser negativo'
+  }),
+  referencia: Joi.string().max(100).optional().allow('').messages({
+    'string.max': 'La referencia no puede exceder 100 caracteres'
+  }),
+  observaciones: Joi.string().max(500).optional().allow('').messages({
+    'string.max': 'Las observaciones no pueden exceder 500 caracteres'
+  })
+});
+
+
 export const createSaleSchema = Joi.object({
   caja_id: Joi.number().integer().positive().required().messages({
     'number.base': 'La caja debe ser un número válido',
@@ -23,16 +51,9 @@ export const createSaleSchema = Joi.object({
     'array.min': 'Debe agregar al menos un producto',
     'any.required': 'Los items son requeridos'
   }),
-  metodo_pago: Joi.string().valid(
-    'efectivo_usd', 
-    'efectivo_ves', 
-    'tarjeta', 
-    'transferencia', 
-    'pago_movil', 
-    'mixto'
-  ).required().messages({
-    'any.only': 'Método de pago inválido',
-    'any.required': 'El método de pago es requerido'
+  pagos: Joi.array().items(paymentDetailSchema).min(1).required().messages({
+    'array.min': 'Debe agregar al menos una forma de pago',
+    'any.required': 'Las formas de pago son requeridas'
   }),
   monto_recibido_usd: Joi.number().min(0).precision(2).default(0).messages({
     'number.base': 'El monto recibido en USD debe ser un número válido',

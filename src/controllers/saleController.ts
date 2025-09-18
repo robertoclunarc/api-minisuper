@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { AppDataSource } from '../config/database';
-import { Sale, SaleStatus } from '../models/Sale';
+import { Sale, SaleStatus, PaymentDetail } from '../models/Sale';
 import { SaleDetail } from '../models/SaleDetail';
 import { Product } from '../models/Product';
 import { InventoryBatch } from '../models/InventoryBatch';
@@ -35,12 +35,14 @@ export class SaleController {
       const { 
         caja_id, 
         items, 
-        metodo_pago, 
+        pagos, 
         monto_recibido_usd = 0, 
         monto_recibido_ves = 0,
         descuento_usd = 0,
         descuento_ves = 0
       } = value;
+
+      console.log('💳 Creating sale with multiple payments:', { caja_id, items, pagos });
 
       // Verificar que el usuario tiene una caja abierta
       const openCash = await this.cashCloseRepository.findOne({
@@ -62,6 +64,25 @@ export class SaleController {
 
       // Obtener tasa de cambio actual
       const exchangeRate = await this.currencyService.getCurrentExchangeRate();
+
+      // ✅ VALIDAR PAGOS
+      let totalPagadoUSD = 0;
+      let totalPagadoVES = 0;
+      const metodosUsados: string[] = [];
+
+      for (const pago of pagos) {
+        if (pago.monto_usd <= 0 && pago.monto_ves <= 0) {
+          await queryRunner.rollbackTransaction();
+          return res.status(400).json({
+            success: false,
+            message: 'Cada forma de pago debe tener un monto mayor a 0'
+          });
+        }
+        
+        totalPagadoUSD += pago.monto_usd;
+        totalPagadoVES += pago.monto_ves;
+        metodosUsados.push(pago.metodo_pago);
+      }
 
       // Validar productos y stock
       const saleDetails = [];
@@ -159,24 +180,24 @@ export class SaleController {
       const totalUSD = subtotalConDescuentoUSD + impuestoUSD;
       const totalVES = subtotalConDescuentoVES + impuestoVES;
 
-      // Validar pago
-      let cambioUSD = 0;
-      let cambioVES = 0;
-
-      if (metodo_pago.includes('efectivo')) {
-        const totalRecibidoUSD = monto_recibido_usd + (monto_recibido_ves / exchangeRate);
-        
-        if (totalRecibidoUSD < totalUSD) {
-          await queryRunner.rollbackTransaction();
-          return res.status(400).json({
-            success: false,
-            message: 'Monto recibido insuficiente'
-          });
-        }
-
-        cambioUSD = totalRecibidoUSD - totalUSD;
-        cambioVES = cambioUSD * exchangeRate;
+      // ✅ VALIDAR QUE EL PAGO SEA SUFICIENTE
+      const totalRecibidoEnUSD = totalPagadoUSD + (totalPagadoVES / exchangeRate);
+      
+      if (totalRecibidoEnUSD < totalUSD) {
+        await queryRunner.rollbackTransaction();
+        return res.status(400).json({
+          success: false,
+          message: `Pago insuficiente. Total: $${totalUSD.toFixed(2)}, Recibido: $${totalRecibidoEnUSD.toFixed(2)}`
+        });
       }
+
+      // ✅ CALCULAR CAMBIO
+      const cambioUSD = totalRecibidoEnUSD - totalUSD;
+      const cambioVES = cambioUSD * exchangeRate;
+
+      // ✅ CREAR RESUMEN DE MÉTODOS DE PAGO
+      const metodosUnicos = [...new Set(metodosUsados)];
+      const resumenMetodos = metodosUnicos.length > 1 ? 'mixto' : metodosUnicos[0];
 
       // Crear la venta
       const sale = queryRunner.manager.create(Sale, {
@@ -192,7 +213,7 @@ export class SaleController {
         impuesto_ves: impuestoVES,
         total_usd: totalUSD,
         total_ves: totalVES,
-        metodo_pago,
+        metodo_pago: resumenMetodos,
         monto_recibido_usd,
         monto_recibido_ves,
         cambio_usd: cambioUSD,
@@ -202,6 +223,19 @@ export class SaleController {
       });
 
       const savedSale = await queryRunner.manager.save(Sale, sale);
+
+      // ✅ CREAR DETALLES DE PAGO
+      for (const pago of pagos) {
+        const paymentDetail = queryRunner.manager.create(PaymentDetail, {
+          venta_id: savedSale.id,
+          metodo_pago: pago.metodo_pago,
+          monto_usd: pago.monto_usd,
+          monto_ves: pago.monto_ves,
+          referencia: pago.referencia,
+          observaciones: pago.observaciones
+        });
+        await queryRunner.manager.save(PaymentDetail, paymentDetail);
+      }
 
       // Crear detalles de venta
       for (const detail of saleDetails) {

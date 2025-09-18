@@ -13,6 +13,15 @@ export enum PaymentMethod {
   MIXED = 'mixto'
 }
 
+export interface PaymentDetail {
+  id?: number;
+  metodo_pago: string;
+  monto_usd: number;
+  monto_ves: number;
+  referencia?: string;
+  observaciones?: string;
+}
+
 export enum SaleStatus {
   COMPLETED = 'completada',
   CANCELLED = 'anulada'
@@ -62,8 +71,8 @@ export class Sale {
   @Column({ type: 'decimal', precision: 10, scale: 4 })
   tasa_cambio_venta: number;
 
-  @Column({ type: 'enum', enum: PaymentMethod, default: PaymentMethod.CASH_VES })
-  metodo_pago: PaymentMethod;
+  @Column({ length: 255 })
+  metodo_pago: string;
 
   @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
   monto_recibido_usd: number;
@@ -145,5 +154,9 @@ export class Sale {
 
   get tasa_cambio(): number {
     return this.tasa_cambio_venta; // Alias para compatibilidad
+  }
+
+  get tiene_pagos_multiples(): boolean {
+    return this.detalles?.length > 1;
   }
 }
