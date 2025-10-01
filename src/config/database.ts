@@ -8,6 +8,7 @@ import { CashRegister } from '../models/CashRegister';
 import { CashRegisterClose } from '../models/CashRegisterClose';
 import { Sale } from '../models/Sale';
 import { SaleDetail } from '../models/SaleDetail';
+import { PaymentDetail } from '../models/PaymentDetail'; 
 import { ExchangeRate } from '../models/ExchangeRate';
 
 export const AppDataSource = new DataSource({
@@ -29,6 +30,7 @@ export const AppDataSource = new DataSource({
     CashRegisterClose,
     Sale,
     SaleDetail,
+    PaymentDetail,
     ExchangeRate
   ],
   migrations: ['src/migrations/*.ts'],

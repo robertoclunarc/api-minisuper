@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { AppDataSource } from '../config/database';
-import { Sale, SaleStatus, PaymentDetail } from '../models/Sale';
+import { Sale, SaleStatus } from '../models/Sale';
+import { PaymentDetail } from '../models/PaymentDetail';
 import { SaleDetail } from '../models/SaleDetail';
 import { Product } from '../models/Product';
 import { InventoryBatch } from '../models/InventoryBatch';
@@ -18,280 +19,274 @@ export class SaleController {
   private currencyService = new CurrencyService();
 
   public createSale = async (req: AuthRequest, res: Response) => {
-    const queryRunner = AppDataSource.createQueryRunner();
-    await queryRunner.connect();
-    await queryRunner.startTransaction();
+  const queryRunner = AppDataSource.createQueryRunner();
+  await queryRunner.connect();
+  await queryRunner.startTransaction();
 
-    try {
-      const { error, value } = createSaleSchema.validate(req.body);
-      if (error) {
-        return res.status(400).json({
-          success: false,
-          message: 'Datos de entrada inválidos',
-          errors: error.details.map(detail => detail.message)
-        });
-      }
-
-      const { 
-        caja_id, 
-        items, 
-        pagos, 
-        monto_recibido_usd = 0, 
-        monto_recibido_ves = 0,
-        descuento_usd = 0,
-        descuento_ves = 0
-      } = value;
-
-      console.log('💳 Creating sale with multiple payments:', { caja_id, items, pagos });
-
-      // Verificar que el usuario tiene una caja abierta
-      const openCash = await this.cashCloseRepository.findOne({
-        where: { 
-          usuario_id: req.user!.id,
-          caja_id: caja_id,
-          estado: CashRegisterStatus.OPEN 
-        },
-        relations: ['caja']
+  try {
+    const { error, value } = createSaleSchema.validate(req.body);
+    if (error) {
+      return res.status(400).json({
+        success: false,
+        message: 'Datos de entrada inválidos',
+        errors: error.details.map(detail => detail.message)
       });
+    }
 
-      if (!openCash) {
-        await queryRunner.rollbackTransaction();
-        return res.status(400).json({
-          success: false,
-          message: 'No tienes una caja abierta o no coincide con la caja seleccionada'
-        });
-      }
+    const { 
+      caja_id, 
+      items, 
+      pagos, // ✅ RECIBIR ARRAY DE PAGOS
+      descuento_usd = 0,
+      descuento_ves = 0
+    } = value;
 
-      // Obtener tasa de cambio actual
-      const exchangeRate = await this.currencyService.getCurrentExchangeRate();
+    console.log('💳 Creating sale with multiple payments:', { caja_id, items, pagos });
 
-      // ✅ VALIDAR PAGOS
-      let totalPagadoUSD = 0;
-      let totalPagadoVES = 0;
-      const metodosUsados: string[] = [];
-
-      for (const pago of pagos) {
-        if (pago.monto_usd <= 0 && pago.monto_ves <= 0) {
-          await queryRunner.rollbackTransaction();
-          return res.status(400).json({
-            success: false,
-            message: 'Cada forma de pago debe tener un monto mayor a 0'
-          });
-        }
-        
-        totalPagadoUSD += pago.monto_usd;
-        totalPagadoVES += pago.monto_ves;
-        metodosUsados.push(pago.metodo_pago);
-      }
-
-      // Validar productos y stock
-      const saleDetails = [];
-      let subtotalUSD = 0;
-      let subtotalVES = 0;
-
-      for (const item of items) {
-        const product = await this.productRepository.findOne({
-          where: { id: item.producto_id, activo: true }
-        });
-
-        if (!product) {
-          await queryRunner.rollbackTransaction();
-          return res.status(404).json({
-            success: false,
-            message: `Producto con ID ${item.producto_id} no encontrado`
-          });
-        }
-
-        // Obtener lotes disponibles (FIFO - primero los que vencen antes)
-        const availableBatches = await this.batchRepository
-          .createQueryBuilder('lote')
-          .where('lote.producto_id = :producto_id', { producto_id: item.producto_id })
-          .andWhere('lote.cantidad_actual > 0')
-          .orderBy('ISNULL(lote.fecha_vencimiento)', 'ASC') // NULL al final
-          .addOrderBy('lote.fecha_vencimiento', 'ASC')
-          .addOrderBy('lote.fecha_ingreso', 'ASC')
-          .getMany();
-
-        const totalAvailable = availableBatches.reduce((sum, batch) => sum + batch.cantidad_actual, 0);
-
-        if (totalAvailable < item.cantidad) {
-          await queryRunner.rollbackTransaction();
-          return res.status(400).json({
-            success: false,
-            message: `Stock insuficiente para ${product.nombre}. Disponible: ${totalAvailable}, Solicitado: ${item.cantidad}`
-          });
-        }
-
-        // Procesar venta con FIFO
-        let cantidadRestante = item.cantidad;
-        const batchesUsed = [];
-
-        for (const batch of availableBatches) {
-          if (cantidadRestante <= 0) break;
-
-          const cantidadDeLote = Math.min(cantidadRestante, batch.cantidad_actual);
-          
-          if (cantidadDeLote > 0) {
-            batchesUsed.push({
-              lote: batch,
-              cantidad: cantidadDeLote
-            });
-
-            // Actualizar stock del lote
-            batch.cantidad_actual -= cantidadDeLote;
-            await queryRunner.manager.save(InventoryBatch, batch);
-
-            cantidadRestante -= cantidadDeLote;
-          }
-        }
-
-        // Crear detalles de venta por cada lote usado
-        for (const batchUsed of batchesUsed) {
-          const precioUnitarioUSD = product.precio_venta_usd;
-          const precioUnitarioVES = precioUnitarioUSD * exchangeRate;
-          const subtotalItemUSD = precioUnitarioUSD * batchUsed.cantidad;
-          const subtotalItemVES = precioUnitarioVES * batchUsed.cantidad;
-
-          saleDetails.push({
-            producto_id: product.id,
-            lote_id: batchUsed.lote.id,
-            cantidad: batchUsed.cantidad,
-            precio_unitario_usd: precioUnitarioUSD,
-            precio_unitario_ves: precioUnitarioVES,
-            subtotal_usd: subtotalItemUSD,
-            subtotal_ves: subtotalItemVES
-          });
-
-          subtotalUSD += subtotalItemUSD;
-          subtotalVES += subtotalItemVES;
-        }
-      }
-
-      // Aplicar descuentos
-      const subtotalConDescuentoUSD = subtotalUSD - descuento_usd;
-      const subtotalConDescuentoVES = subtotalVES - descuento_ves;
-
-      // Calcular impuestos (16% IVA)
-      const taxRate = 0.16;
-      const impuestoUSD = subtotalConDescuentoUSD * taxRate;
-      const impuestoVES = subtotalConDescuentoVES * taxRate;
-
-      // Total final
-      const totalUSD = subtotalConDescuentoUSD + impuestoUSD;
-      const totalVES = subtotalConDescuentoVES + impuestoVES;
-
-      // ✅ VALIDAR QUE EL PAGO SEA SUFICIENTE
-      const totalRecibidoEnUSD = totalPagadoUSD + (totalPagadoVES / exchangeRate);
-      
-      if (totalRecibidoEnUSD < totalUSD) {
-        await queryRunner.rollbackTransaction();
-        return res.status(400).json({
-          success: false,
-          message: `Pago insuficiente. Total: $${totalUSD.toFixed(2)}, Recibido: $${totalRecibidoEnUSD.toFixed(2)}`
-        });
-      }
-
-      // ✅ CALCULAR CAMBIO
-      const cambioUSD = totalRecibidoEnUSD - totalUSD;
-      const cambioVES = cambioUSD * exchangeRate;
-
-      // ✅ CREAR RESUMEN DE MÉTODOS DE PAGO
-      const metodosUnicos = [...new Set(metodosUsados)];
-      const resumenMetodos = metodosUnicos.length > 1 ? 'mixto' : metodosUnicos[0];
-
-      // Crear la venta
-      const sale = queryRunner.manager.create(Sale, {
-        numero_factura: await this.generateSaleNumber(),
+    // Verificar que el usuario tiene una caja abierta
+    const openCash = await this.cashCloseRepository.findOne({
+      where: { 
         usuario_id: req.user!.id,
         caja_id: caja_id,
-        cierre_caja_id: openCash.id,
-        subtotal_usd: subtotalUSD,
-        subtotal_ves: subtotalVES,
-        descuento_usd,
-        descuento_ves,
-        impuesto_usd: impuestoUSD,
-        impuesto_ves: impuestoVES,
-        total_usd: totalUSD,
-        total_ves: totalVES,
-        metodo_pago: resumenMetodos,
-        monto_recibido_usd,
-        monto_recibido_ves,
-        cambio_usd: cambioUSD,
-        cambio_ves: cambioVES,
-        tasa_cambio_venta: exchangeRate,
-        estado: SaleStatus.COMPLETED
+        estado: CashRegisterStatus.OPEN 
+      },
+      relations: ['caja']
+    });
+
+    if (!openCash) {
+      await queryRunner.rollbackTransaction();
+      return res.status(400).json({
+        success: false,
+        message: 'No tienes una caja abierta o no coincide con la caja seleccionada'
+      });
+    }
+
+    // Obtener tasa de cambio actual
+    const exchangeRate = await this.currencyService.getCurrentExchangeRate();
+
+    // ✅ VALIDAR PAGOS
+    let totalPagadoUSD = 0;
+    let totalPagadoVES = 0;
+    const metodosUsados: string[] = [];
+
+    for (const pago of pagos) {
+      if (pago.monto_usd <= 0 && pago.monto_ves <= 0) {
+        await queryRunner.rollbackTransaction();
+        return res.status(400).json({
+          success: false,
+          message: 'Cada forma de pago debe tener un monto mayor a 0'
+        });
+      }
+      
+      totalPagadoUSD += pago.monto_usd;
+      totalPagadoVES += pago.monto_ves;
+      metodosUsados.push(pago.metodo_pago);
+    }
+
+    // Procesar productos (mantener lógica FIFO existente)
+    const saleDetails = [];
+    let subtotalUSD = 0;
+    let subtotalVES = 0;
+
+    for (const item of items) {
+      const product = await this.productRepository.findOne({
+        where: { id: item.producto_id, activo: true }
       });
 
-      const savedSale = await queryRunner.manager.save(Sale, sale);
-
-      // ✅ CREAR DETALLES DE PAGO
-      for (const pago of pagos) {
-        const paymentDetail = queryRunner.manager.create(PaymentDetail, {
-          venta_id: savedSale.id,
-          metodo_pago: pago.metodo_pago,
-          monto_usd: pago.monto_usd,
-          monto_ves: pago.monto_ves,
-          referencia: pago.referencia,
-          observaciones: pago.observaciones
+      if (!product) {
+        await queryRunner.rollbackTransaction();
+        return res.status(404).json({
+          success: false,
+          message: `Producto con ID ${item.producto_id} no encontrado`
         });
-        await queryRunner.manager.save(PaymentDetail, paymentDetail);
+      }
+
+      const availableBatches = await this.batchRepository
+        .createQueryBuilder('lote')
+        .where('lote.producto_id = :producto_id', { producto_id: item.producto_id })
+        .andWhere('lote.cantidad_actual > 0')
+        .orderBy('ISNULL(lote.fecha_vencimiento)', 'ASC')
+        .addOrderBy('lote.fecha_vencimiento', 'ASC')
+        .addOrderBy('lote.fecha_ingreso', 'ASC')
+        .getMany();
+
+      const totalAvailable = availableBatches.reduce((sum, batch) => sum + batch.cantidad_actual, 0);
+
+      if (totalAvailable < item.cantidad) {
+        await queryRunner.rollbackTransaction();
+        return res.status(400).json({
+          success: false,
+          message: `Stock insuficiente para ${product.nombre}. Disponible: ${totalAvailable}, Solicitado: ${item.cantidad}`
+        });
+      }
+
+      // Procesar venta con FIFO (mantener lógica existente)
+      let cantidadRestante = item.cantidad;
+      const batchesUsed = [];
+
+      for (const batch of availableBatches) {
+        if (cantidadRestante <= 0) break;
+
+        const cantidadDeLote = Math.min(cantidadRestante, batch.cantidad_actual);
+        
+        if (cantidadDeLote > 0) {
+          batchesUsed.push({
+            lote: batch,
+            cantidad: cantidadDeLote
+          });
+
+          batch.cantidad_actual -= cantidadDeLote;
+          await queryRunner.manager.save(InventoryBatch, batch);
+          cantidadRestante -= cantidadDeLote;
+        }
       }
 
       // Crear detalles de venta
-      for (const detail of saleDetails) {
-        const saleDetail = queryRunner.manager.create(SaleDetail, {
-          ...detail,
-          venta_id: savedSale.id
+      for (const batchUsed of batchesUsed) {
+        const precioUnitarioUSD = product.precio_venta_usd;
+        const precioUnitarioVES = precioUnitarioUSD * exchangeRate;
+        const subtotalItemUSD = precioUnitarioUSD * batchUsed.cantidad;
+        const subtotalItemVES = precioUnitarioVES * batchUsed.cantidad;
+
+        saleDetails.push({
+          producto_id: product.id,
+          lote_id: batchUsed.lote.id,
+          cantidad: batchUsed.cantidad,
+          precio_unitario_usd: precioUnitarioUSD,
+          precio_unitario_ves: precioUnitarioVES,
+          subtotal_usd: subtotalItemUSD,
+          subtotal_ves: subtotalItemVES
         });
-        await queryRunner.manager.save(SaleDetail, saleDetail);
+
+        subtotalUSD += subtotalItemUSD;
+        subtotalVES += subtotalItemVES;
       }
-
-      // Actualizar estadísticas del cierre de caja
-      await queryRunner.manager.update(CashRegisterClose, openCash.id, {
-        total_ventas: () => `total_ventas + ${totalUSD}`,
-        total_transacciones: () => 'total_transacciones + 1'
-      });
-
-      await queryRunner.commitTransaction();
-
-      // Obtener venta completa para respuesta
-      const completeSale = await this.saleRepository
-        .createQueryBuilder('venta')
-        .leftJoinAndSelect('venta.detalles', 'detalles')
-        .leftJoinAndSelect('detalles.producto', 'producto')
-        .leftJoinAndSelect('detalles.lote', 'lote')
-        .leftJoinAndSelect('venta.usuario', 'usuario')
-        .leftJoinAndSelect('venta.caja', 'caja')
-        .where('venta.id = :id', { id: savedSale.id })
-        .getOne();
-
-      res.status(201).json({
-        success: true,
-        message: 'Venta creada exitosamente',
-        data: {
-          venta: {
-            ...completeSale,
-            id: savedSale.id, // Asegurar que el ID esté presente
-          },
-          cambio: {
-            usd: cambioUSD,
-            ves: cambioVES
-          },
-          tasa_cambio: exchangeRate
-        }
-      });
-
-    } catch (error) {
-      await queryRunner.rollbackTransaction();
-      console.error('Error creando venta:', error);
-      res.status(500).json({
-        success: false,
-        message: 'Error interno del servidor'
-      });
-    } finally {
-      await queryRunner.release();
     }
-  };
+
+    // Aplicar descuentos
+    const subtotalConDescuentoUSD = subtotalUSD - descuento_usd;
+    const subtotalConDescuentoVES = subtotalVES - descuento_ves;
+
+    // Calcular impuestos (16% IVA)
+    const taxRate = 0.16;
+    const impuestoUSD = subtotalConDescuentoUSD * taxRate;
+    const impuestoVES = subtotalConDescuentoVES * taxRate;
+
+    // Total final
+    const totalUSD = subtotalConDescuentoUSD + impuestoUSD;
+    const totalVES = subtotalConDescuentoVES + impuestoVES;
+
+    // ✅ VALIDAR QUE EL PAGO SEA SUFICIENTE
+    const totalRecibidoEnUSD = totalPagadoUSD + (totalPagadoVES / exchangeRate);
+    
+    if (totalRecibidoEnUSD < totalUSD) {
+      await queryRunner.rollbackTransaction();
+      return res.status(400).json({
+        success: false,
+        message: `Pago insuficiente. Total: $${totalUSD.toFixed(2)}, Recibido: $${totalRecibidoEnUSD.toFixed(2)}`
+      });
+    }
+
+    // ✅ CALCULAR CAMBIO
+    const cambioUSD = totalRecibidoEnUSD - totalUSD;
+    const cambioVES = cambioUSD * exchangeRate;
+
+    // ✅ CREAR RESUMEN DE MÉTODOS DE PAGO
+    const metodosUnicos = [...new Set(metodosUsados)];
+    const resumenMetodos = metodosUnicos.length > 1 ? 'mixto' : (metodosUnicos[0] ?? 'desconocido');
+
+    // Crear la venta
+    const sale = queryRunner.manager.create(Sale, {
+      numero_venta: await this.generateSaleNumber(),
+      usuario_id: req.user!.id,
+      caja_id: caja_id,
+      cierre_caja_id: openCash.id,
+      subtotal_usd: subtotalUSD,
+      subtotal_ves: subtotalVES,
+      descuento_usd,
+      descuento_ves,
+      impuesto_usd: impuestoUSD,
+      impuesto_ves: impuestoVES,
+      total_usd: totalUSD,
+      total_ves: totalVES,
+      metodo_pago: resumenMetodos, // ✅ RESUMEN DE MÉTODOS (siempre string)
+      monto_recibido_usd: totalPagadoUSD,
+      monto_recibido_ves: totalPagadoVES,
+      cambio_usd: cambioUSD,
+      cambio_ves: cambioVES,
+      tasa_cambio_venta: exchangeRate,
+      estado: SaleStatus.COMPLETED
+    });
+
+    const savedSale = await queryRunner.manager.save(Sale, sale);
+
+    // ✅ CREAR DETALLES DE PAGO
+    for (const pago of pagos) {
+      const paymentDetail = queryRunner.manager.create(PaymentDetail, {
+        venta_id: savedSale.id,
+        metodo_pago: pago.metodo_pago,
+        monto_usd: pago.monto_usd,
+        monto_ves: pago.monto_ves,
+        referencia: pago.referencia,
+        observaciones: pago.observaciones
+      });
+      await queryRunner.manager.save(PaymentDetail, paymentDetail);
+    }
+
+    // Crear detalles de venta (mantener lógica existente)
+    for (const detail of saleDetails) {
+      const saleDetail = queryRunner.manager.create(SaleDetail, {
+        ...detail,
+        venta_id: savedSale.id
+      });
+      await queryRunner.manager.save(SaleDetail, saleDetail);
+    }
+
+    // Actualizar estadísticas del cierre de caja
+    await queryRunner.manager.update(CashRegisterClose, openCash.id, {
+      total_ventas: () => `total_ventas + ${totalUSD}`,
+      total_transacciones: () => 'total_transacciones + 1'
+    });
+
+    await queryRunner.commitTransaction();
+
+    // Obtener venta completa para respuesta
+    const completeSale = await this.saleRepository
+      .createQueryBuilder('venta')
+      .leftJoinAndSelect('venta.detalles', 'detalles')
+      .leftJoinAndSelect('detalles.producto', 'producto')
+      .leftJoinAndSelect('detalles.lote', 'lote')
+      .leftJoinAndSelect('venta.detalle_pagos', 'pagos') // ✅ INCLUIR PAGOS
+      .leftJoinAndSelect('venta.usuario', 'usuario')
+      .leftJoinAndSelect('venta.caja', 'caja')
+      .where('venta.id = :id', { id: savedSale.id })
+      .getOne();
+
+    res.status(201).json({
+      success: true,
+      message: 'Venta con pagos múltiples creada exitosamente',
+      data: {
+        venta: completeSale,
+        cambio: {
+          usd: cambioUSD,
+          ves: cambioVES
+        },
+        resumen_pagos: pagos,
+        tasa_cambio: exchangeRate
+      }
+    });
+
+  } catch (error) {
+    await queryRunner.rollbackTransaction();
+    console.error('❌ Error creando venta:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error interno del servidor'
+    });
+  } finally {
+    await queryRunner.release();
+  }
+};
 
   public getSales = async (req: Request, res: Response) => {
     try {
@@ -507,7 +502,7 @@ export class SaleController {
           rif: 'RIF de la empresa'
         },
         venta: {
-          numero: sale.numero_factura,
+          numero: sale.numero_venta,
           fecha: sale.fecha_venta,
           cajero: sale.usuario.nombre,
           caja: sale.caja.nombre
@@ -595,7 +590,7 @@ export class SaleController {
         });
       }
 
-      if (sale.estado === SaleStatus.CANCELLED) {
+      if (sale.estado === SaleStatus.CANCELED) {
         await queryRunner.rollbackTransaction();
         return res.status(400).json({
           success: false,
@@ -614,7 +609,7 @@ export class SaleController {
 
       // Actualizar la venta
       await queryRunner.manager.update(Sale, id, {
-        estado: SaleStatus.CANCELLED,
+        estado: SaleStatus.CANCELED,
        // motivoCancelacion: motivo,
        // fechaCancelacion: new Date(),
        // canceladoPor: req.user!.id
@@ -635,7 +630,7 @@ export class SaleController {
         message: 'Venta cancelada exitosamente',
         data: {
           venta_id: sale.id,
-          numero_factura: sale.numero_factura,
+          numero_venta: sale.numero_venta,
           monto_reembolsado_usd: sale.total_usd,
           monto_reembolsado_ves: sale.total_ves,
           motivo,
@@ -666,13 +661,13 @@ export class SaleController {
     
     const lastSale = await this.saleRepository
       .createQueryBuilder('venta')
-      .where('venta.numero_factura LIKE :prefix', { prefix: `${prefix}%` })
-      .orderBy('venta.numero_factura', 'DESC')
+      .where('venta.numero_venta LIKE :prefix', { prefix: `${prefix}%` })
+      .orderBy('venta.numero_venta', 'DESC')
       .getOne();
 
     let sequence = 1;
     if (lastSale) {
-      const lastSequence = parseInt(lastSale.numero_factura.substring(8));
+      const lastSequence = parseInt(lastSale.numero_venta.substring(8));
       sequence = lastSequence + 1;
     }
 
