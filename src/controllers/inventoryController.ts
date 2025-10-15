@@ -5,16 +5,21 @@ import { Product } from '../models/Product';
 import { CurrencyService } from '../services/currencyService';
 import { batchEntrySchema, stockAdjustmentSchema } from '../validations/inventoryValidation';
 import { AuthRequest } from '../middleware/auth';
+import { Provider } from '../models/Provider';
+import { User } from '../models/User';
 
 export class InventoryController {
   private batchRepository = AppDataSource.getRepository(InventoryBatch);
   private productRepository = AppDataSource.getRepository(Product);
   private currencyService = new CurrencyService();
+  private providerRepository = AppDataSource.getRepository(Provider);
+  private userRepository = AppDataSource.getRepository(User);
 
   public createBatch = async (req: AuthRequest, res: Response) => {
     try {
       const { error, value } = batchEntrySchema.validate(req.body);
       if (error) {
+        console.error( error.details.map(detail => detail.message))
         return res.status(400).json({
           success: false,
           message: 'Datos de entrada inválidos',
@@ -255,116 +260,185 @@ export class InventoryController {
     }
   };
 
-  public getOverallStock = async (req: Request, res: Response) => {
+  public getBatches = async (req: Request, res: Response) => {
     try {
       const { 
         page = 1, 
-        limit = 50, 
+        limit = 25, 
         search, 
-        categoria_id, 
-        low_stock_only = false 
+        producto_id, 
+        proveedor_id,
+        estado,
+        fecha_vencimiento_desde,
+        fecha_vencimiento_hasta
       } = req.query;
+
+      console.log('📦 Getting inventory batches with filters:', {
+        page, limit, search, producto_id, proveedor_id, estado,
+        fecha_vencimiento_desde, fecha_vencimiento_hasta
+      });
 
       const skip = (Number(page) - 1) * Number(limit);
 
-      // Query complejo para obtener stock con JOIN
-      let queryBuilder = this.productRepository
-        .createQueryBuilder('producto')
+      // ✅ QUERY CORREGIDO PARA LOTES DE INVENTARIO
+      let queryBuilder = this.batchRepository
+        .createQueryBuilder('lote')
+        .leftJoinAndSelect('lote.producto', 'producto')
+        .leftJoinAndSelect('lote.proveedor', 'proveedor')
+        .leftJoinAndSelect('lote.usuario', 'usuario')
         .leftJoinAndSelect('producto.categoria', 'categoria')
-        .leftJoinAndSelect('producto.proveedor', 'proveedor')
-        .leftJoin('producto.lotes', 'lotes')
-        .select([
-          'producto.id',
-          'producto.codigo_barras',
-          'producto.codigo_interno', 
-          'producto.nombre',
-          'producto.precio_venta_usd',
-          'producto.stock_minimo',
-          'categoria.nombre',
-          'proveedor.nombre',
-          'COALESCE(SUM(lotes.cantidad_actual), 0) as stock_total',
-          'COUNT(lotes.id) as total_lotes',
-          'COUNT(CASE WHEN lotes.cantidad_actual > 0 THEN 1 END) as lotes_disponibles',
-          'COUNT(CASE WHEN lotes.fecha_vencimiento < NOW() AND lotes.cantidad_actual > 0 THEN 1 END) as lotes_vencidos',
-          'SUM(lotes.cantidad_actual * lotes.precio_costo_usd) as valor_inventario_usd'
-        ])
-        .where('producto.activo = :activo', { activo: true })
-        .groupBy('producto.id')
-        .addGroupBy('categoria.id')
-        .addGroupBy('proveedor.id');
+        .orderBy('lote.fecha_ingreso', 'DESC')
+        .addOrderBy('lote.numero_lote', 'ASC');
 
+      // ✅ APLICAR FILTROS
       if (search) {
         queryBuilder = queryBuilder.andWhere(
-          '(producto.codigo_barras LIKE :search OR producto.codigo_interno LIKE :search OR producto.nombre LIKE :search)',
+          '(lote.numero_lote LIKE :search OR producto.nombre LIKE :search OR producto.codigo_barras LIKE :search)',
           { search: `%${search}%` }
         );
       }
 
-      if (categoria_id) {
-        queryBuilder = queryBuilder.andWhere('producto.categoria_id = :categoria_id', { categoria_id });
+      if (producto_id) {
+        queryBuilder = queryBuilder.andWhere('lote.producto_id = :producto_id', { producto_id });
       }
 
-      const products = await queryBuilder
-        .orderBy('producto.nombre', 'ASC')
-        .getRawMany();
+      if (proveedor_id) {
+        queryBuilder = queryBuilder.andWhere('lote.proveedor_id = :proveedor_id', { proveedor_id });
+      }
 
-      // Procesar resultados
-      const processedProducts = products.map(product => {
-        const stockTotal = Number(product.stock_total) || 0;
-        const stockMinimo = Number(product.stock_minimo) || 0;
-        const valorInventarioUSD = Number(product.valor_inventario_usd) || 0;
+      // ✅ FILTROS POR ESTADO
+      if (estado) {
+        const today = new Date().toISOString().split('T')[0];
+        
+        switch (estado) {
+          case 'disponible':
+            queryBuilder = queryBuilder
+              .andWhere('lote.cantidad_actual > 0')
+              .andWhere('(lote.fecha_vencimiento IS NULL OR lote.fecha_vencimiento > :today)', { today });
+            break;
+          case 'por_vencer':
+            queryBuilder = queryBuilder
+              .andWhere('lote.cantidad_actual > 0')
+              .andWhere('lote.fecha_vencimiento IS NOT NULL')
+              .andWhere('lote.fecha_vencimiento <= DATE_ADD(:today, INTERVAL 30 DAY)', { today })
+              .andWhere('lote.fecha_vencimiento > :today', { today });
+            break;
+          case 'vencido':
+            queryBuilder = queryBuilder
+              .andWhere('lote.cantidad_actual > 0')
+              .andWhere('lote.fecha_vencimiento IS NOT NULL')
+              .andWhere('lote.fecha_vencimiento <= :today', { today });
+            break;
+        }
+      }
 
-        return {
-          id: product.producto_id,
-          codigo_barras: product.producto_codigo_barras,
-          codigo_interno: product.producto_codigo_interno,
-          nombre: product.producto_nombre,
-          categoria: product.categoria_nombre,
-          proveedor: product.proveedor_nombre,
-          precio_venta_usd: Number(product.producto_precio_venta_usd),
-          stock_minimo: stockMinimo,
-          stock_total: stockTotal,
-          total_lotes: Number(product.total_lotes),
-          lotes_disponibles: Number(product.lotes_disponibles),
-          lotes_vencidos: Number(product.lotes_vencidos),
-          valor_inventario_usd: valorInventarioUSD,
-          estado_stock: stockTotal <= stockMinimo ? 'bajo' : 'normal'
-        };
+      // ✅ FILTROS POR FECHA DE VENCIMIENTO
+      if (fecha_vencimiento_desde) {
+        queryBuilder = queryBuilder.andWhere(
+          'lote.fecha_vencimiento >= :fecha_desde', 
+          { fecha_desde: fecha_vencimiento_desde }
+        );
+      }
+
+      if (fecha_vencimiento_hasta) {
+        queryBuilder = queryBuilder.andWhere(
+          'lote.fecha_vencimiento <= :fecha_hasta', 
+          { fecha_hasta: fecha_vencimiento_hasta }
+        );
+      }
+
+      // ✅ OBTENER TOTAL PARA PAGINACIÓN
+      const total = await queryBuilder.getCount();
+
+      // ✅ APLICAR PAGINACIÓN Y OBTENER RESULTADOS
+      const batches = await queryBuilder
+        .skip(skip)
+        .take(Number(limit))
+        .getMany();
+
+      // ✅ TRANSFORMAR DATOS PARA EL FRONTEND
+      const formattedBatches = batches.map(batch => ({
+        id: batch.id,
+        producto_id: batch.producto_id,
+        proveedor_id: batch.proveedor_id,
+        numero_lote: batch.numero_lote,
+        cantidad_inicial: Number(batch.cantidad_inicial),
+        cantidad_actual: Number(batch.cantidad_actual),
+        precio_costo_usd: Number(batch.precio_costo_usd),
+        tasa_cambio_registro: Number(batch.tasa_cambio_registro),
+        fecha_vencimiento: batch.fecha_vencimiento,
+        fecha_ingreso: batch.fecha_ingreso,
+        usuario_id: batch.usuario_id,      
+        
+        // ✅ RELACIONES
+        producto: batch.producto ? {
+          id: batch.producto.id,
+          codigo_barras: batch.producto.codigo_barras,
+          codigo_interno: batch.producto.codigo_interno,
+          nombre: batch.producto.nombre,
+          descripcion: batch.producto.descripcion,
+          categoria_id: batch.producto.categoria_id,
+          proveedor_id: batch.producto.proveedor_id,
+          precio_venta_usd: Number(batch.producto.precio_venta_usd),
+          precio_costo_usd: Number(batch.producto.precio_costo_usd),
+          stock_minimo: Number(batch.producto.stock_minimo),
+          unidad_medida: batch.producto.unidad_medida,
+          activo: batch.producto.activo,
+          created_at: batch.producto.created_at,
+          updated_at: batch.producto.updated_at,
+          categoria: batch.producto.categoria
+        } : undefined,
+        
+        proveedor: batch.proveedor ? {
+          id: batch.proveedor.id,
+          nombre: batch.proveedor.nombre,
+          contacto: batch.proveedor.contacto,
+          telefono: batch.proveedor.telefono,
+          email: batch.proveedor.email,
+          direccion: batch.proveedor.direccion,
+          activo: batch.proveedor.activo,
+          created_at: batch.proveedor.created_at
+        } : undefined,
+        
+        usuario: batch.usuario ? {
+          id: batch.usuario.id,
+          nombre: batch.usuario.nombre,        
+          rol: batch.usuario.rol
+        } : undefined,
+        
+        // ✅ CAMPOS CALCULADOS
+        valor_total_usd: Number(batch.cantidad_actual) * Number(batch.precio_costo_usd),
+        dias_hasta_vencimiento: batch.fecha_vencimiento ? 
+          Math.ceil((new Date(batch.fecha_vencimiento).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24)) : 
+          null,
+        estado: this.getEstadoLote(batch)
+      }));
+
+      // ✅ CALCULAR ESTADÍSTICAS
+      const estadisticas = await this.calculateStatistics();
+
+      console.log('✅ Inventory batches retrieved:', {
+        total_batches: formattedBatches.length,
+        total_items: total,
+        page: Number(page)
       });
-
-      // Filtrar solo productos con stock bajo si se solicita
-      let finalProducts = processedProducts;
-      if (low_stock_only === 'true') {
-        finalProducts = processedProducts.filter(product => product.estado_stock === 'bajo');
-      }
-
-      // Paginación manual
-      const total = finalProducts.length;
-      const paginatedProducts = finalProducts.slice(skip, skip + Number(limit));
-
-      // Estadísticas generales
-      const stats = {
-        total_productos: processedProducts.length,
-        productos_stock_bajo: processedProducts.filter(p => p.estado_stock === 'bajo').length,
-        valor_total_inventario_usd: processedProducts.reduce((sum, p) => sum + p.valor_inventario_usd, 0),
-        productos_sin_stock: processedProducts.filter(p => p.stock_total === 0).length
-      };
 
       res.json({
         success: true,
         data: {
-          productos: paginatedProducts,
-          estadisticas: stats,
+          batches: formattedBatches,
           pagination: {
             current_page: Number(page),
             total_pages: Math.ceil(total / Number(limit)),
             total_items: total,
             items_per_page: Number(limit)
-          }
+          },
+          statistics: estadisticas
         }
       });
+
     } catch (error) {
-      console.error('Error obteniendo stock general:', error);
+      console.error('❌ Error getting inventory batches:', error);
       res.status(500).json({
         success: false,
         message: 'Error interno del servidor'
@@ -372,10 +446,98 @@ export class InventoryController {
     }
   };
 
+private getEstadoLote(batch: any): 'disponible' | 'por_vencer' | 'vencido' | 'agotado' {
+  const cantidadActual = Number(batch.cantidad_actual);
+
+  if (cantidadActual <= 0) {
+    return 'agotado';
+  }
+
+  if (batch.fecha_vencimiento) {
+    const today = new Date();
+    const expiryDate = new Date(batch.fecha_vencimiento);
+    const daysUntilExpiry = Math.ceil((expiryDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+
+    if (daysUntilExpiry < 0) {
+      return 'vencido';
+    } else if (daysUntilExpiry <= 30) {
+      return 'por_vencer';
+    }
+  }
+
+  return 'disponible';
+}
+
+// ✅ MÉTODO AUXILIAR PARA CALCULAR ESTADÍSTICAS
+  private async calculateStatistics() {
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      
+      // Estadísticas de lotes
+      const totalLotes = await this.batchRepository.count();
+      
+      const lotesDisponibles = await this.batchRepository
+        .createQueryBuilder('lote')
+        .where('lote.cantidad_actual > 0')
+        .andWhere('(lote.fecha_vencimiento IS NULL OR lote.fecha_vencimiento > :today)', { today })
+        .getCount();
+      
+      const lotesPorVencer = await this.batchRepository
+        .createQueryBuilder('lote')
+        .where('lote.cantidad_actual > 0')
+        .andWhere('lote.fecha_vencimiento IS NOT NULL')
+        .andWhere('lote.fecha_vencimiento <= DATE_ADD(:today, INTERVAL 30 DAY)', { today })
+        .andWhere('lote.fecha_vencimiento > :today', { today })
+        .getCount();
+      
+      const lotesVencidos = await this.batchRepository
+        .createQueryBuilder('lote')
+        .where('lote.cantidad_actual > 0')
+        .andWhere('lote.fecha_vencimiento IS NOT NULL')
+        .andWhere('lote.fecha_vencimiento <= :today', { today })
+        .getCount();
+      
+      // Valor total del inventario
+      const valorInventarioResult = await this.batchRepository
+        .createQueryBuilder('lote')
+        .select('SUM(lote.cantidad_actual * lote.precio_costo_usd)', 'valor_total')
+        .where('lote.cantidad_actual > 0')
+        .getRawOne();
+      
+      const valorInventarioUSD = Number(valorInventarioResult?.valor_total) || 0;
+      
+      // Estadísticas de productos
+      const totalProductos = await this.productRepository
+        .createQueryBuilder('producto')
+        .where('producto.activo = :activo', { activo: true })
+        .getCount();
+      
+      return {
+        total_productos: totalProductos,
+        total_lotes: totalLotes,
+        valor_inventario_usd: Number(valorInventarioUSD.toFixed(2)),
+        productos_por_vencer: lotesPorVencer,
+        productos_vencidos: lotesVencidos
+      };
+      
+    } catch (error) {
+      console.error('Error calculating statistics:', error);
+      return {
+        total_productos: 0,
+        total_lotes: 0,
+        valor_inventario_usd: 0,
+        productos_por_vencer: 0,
+        productos_vencidos: 0
+      };
+    }
+  }
+
   public adjustStock = async (req: AuthRequest, res: Response) => {
     try {
+      //console.log('📦 Adjusting stock with data:', req.body);
       const { error, value } = stockAdjustmentSchema.validate(req.body);
       if (error) {
+        console.error('Validation error adjusting stock:', error.details.map(detail => detail.message));
         return res.status(400).json({
           success: false,
           message: 'Datos de entrada inválidos',
@@ -383,53 +545,14 @@ export class InventoryController {
         });
       }
 
-      const { lote_id, nueva_cantidad, motivo } = value;
+      const { id, cantidad_actual, cantidad_inicial, product_id, proveedor_id, precio_costo_usd, tasa_cambio_registro, fecha_vencimiento, fecha_ingreso, numero_lote } = value;
 
-      const batch = await this.batchRepository.findOne({
-        where: { id: lote_id },
-        relations: ['producto', 'usuario']
-      });
-
-      if (!batch) {
-        return res.status(404).json({
-          success: false,
-          message: 'Lote no encontrado'
-        });
-      }
-
-      const cantidadAnterior = batch.cantidad_actual;
-      const diferencia = nueva_cantidad - cantidadAnterior;
-
-      // Actualizar cantidad
-      batch.cantidad_actual = nueva_cantidad;
-      await this.batchRepository.save(batch);
-
-      // Log del ajuste para auditoría
-      console.log(`Ajuste de inventario - Lote: ${lote_id}, Producto: ${batch.producto.nombre}, Cantidad anterior: ${cantidadAnterior}, Nueva cantidad: ${nueva_cantidad}, Diferencia: ${diferencia}, Motivo: ${motivo}, Usuario: ${req.user!.nombre} (${req.user!.id})`);
-
+      await this.batchRepository.update(Number(id), value);
+      
       res.json({
         success: true,
-        message: 'Ajuste de inventario realizado exitosamente',
-        data: {
-          lote: {
-            id: batch.id,
-            numero_lote: batch.numero_lote,
-            producto: batch.producto.nombre
-          },
-          ajuste: {
-            cantidad_anterior: cantidadAnterior,
-            nueva_cantidad,
-            diferencia,
-            tipo_ajuste: diferencia > 0 ? 'incremento' : 'decremento',
-            motivo,
-            fecha_ajuste: new Date(),
-            usuario: req.user!.nombre
-          },
-          valor_impacto: {
-            usd: Number((diferencia * batch.precio_costo_usd).toFixed(2)),
-            ves: Number((diferencia * batch.precio_costo_ves).toFixed(2))
-          }
-        }
+        message: 'Inventario actualizado exitosamente',
+        data: value
       });
     } catch (error) {
       console.error('Error ajustando inventario:', error);

@@ -19,7 +19,8 @@ export const createProviderSchema = Joi.object({
   }),
   direccion: Joi.string().max(500).optional().allow('').messages({
     'string.max': 'La dirección no puede exceder 500 caracteres'
-  })
+  }),
+  activo: Joi.boolean().optional()
 });
 
 export const updateProviderSchema = Joi.object({

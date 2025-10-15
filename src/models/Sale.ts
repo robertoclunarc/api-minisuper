@@ -107,9 +107,9 @@ export class Sale {
   detalle_pagos: PaymentDetail[];
 
   // Computed properties
-  get numero_factura(): string {
+  /*get numero_factura(): string {
     return this.numero_venta;
-  }
+  }*/
 
   get tasa_cambio(): number {
     return this.tasa_cambio_venta;

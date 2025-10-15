@@ -14,7 +14,7 @@ export class ProductController {
   private batchRepository = AppDataSource.getRepository(InventoryBatch);
   private currencyService = new CurrencyService();
 
-  public getProducts = async (req: Request, res: Response) => {
+public getProducts = async (req: Request, res: Response) => {
   try {
     const { 
       page = 1, 
@@ -22,8 +22,10 @@ export class ProductController {
       search, 
       categoria_id, 
       proveedor_id,
-      activo = true 
+      //activo = true 
     } = req.query;
+
+    const activo = req.query.activo === 'true' ? true : req.query.activo === 'false' ? false : true;
 
     const skip = (Number(page) - 1) * Number(limit);
     
@@ -60,6 +62,9 @@ export class ProductController {
       .orderBy('producto.nombre', 'ASC')
       .getRawAndEntities();
 
+      //console.log('el query ejecutado es', queryBuilder.getSql());
+
+
     // ✅ MAPEAR RESULTADOS MANUALMENTE Y ASEGURAR TIPOS
     const products = entities.map((product, index) => {
       const stockActual = Number(raw[index]?.stock_actual) || 0;
@@ -74,7 +79,7 @@ export class ProductController {
       };
     });
 
-    console.log('✅ Products found:', products.length);
+    //console.log('✅ Products found:', products.length);
 
     // Obtener el total de productos (sin paginación)
     const total = await queryBuilder.getCount();
@@ -93,6 +98,58 @@ export class ProductController {
     });
   } catch (error) {
     console.error('❌ Error obteniendo productos:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error interno del servidor'
+    });
+  }
+};
+
+public searchProductsForFilters = async (req: Request, res: Response) => {
+  try {
+    const { q, type = 'codigo' } = req.query;
+    
+    if (!q || typeof q !== 'string' || q.trim().length < 1) {
+      return res.json({
+        success: true,
+        data: []
+      });
+    }
+
+    const searchTerm = q.trim();
+    let query = this.productRepository
+      .createQueryBuilder('producto')
+      .select([
+        'producto.id',
+        'producto.codigo_barras',
+        'producto.nombre'
+      ])
+      .where('producto.activo = :activo', { activo: true });
+
+    if (type === 'codigo') {
+      query = query.andWhere('producto.codigo_barras LIKE :search', { 
+        search: `%${searchTerm}%` 
+      });
+    } else if (type === 'descripcion') {
+      query = query.andWhere('producto.nombre LIKE :search', { 
+        search: `%${searchTerm}%` 
+      });
+    }
+
+    const products = await query
+      .orderBy('producto.nombre', 'ASC')
+      .limit(20) // Limitar resultados para performance
+      .getMany();
+
+    console.log(`🔍 Product search (${type}): "${searchTerm}" - ${products.length} results`);
+
+    res.json({
+      success: true,
+      data: products
+    });
+
+  } catch (error) {
+    console.error('❌ Error searching products for filters:', error);
     res.status(500).json({
       success: false,
       message: 'Error interno del servidor'
@@ -198,6 +255,7 @@ export class ProductController {
     try {
       const { error, value } = createProductSchema.validate(req.body);
       if (error) {
+        console.error('Validation error creating product:', error);
         return res.status(400).json({
           success: false,
           message: 'Datos de entrada inválidos',
@@ -366,7 +424,7 @@ export class ProductController {
     try {
       const { id } = req.params;
       const { error, value } = updateProductSchema.validate(req.body);
-
+      //console.log('Updating product ID:', id, 'with data:', req.body);
       if (error) {
         return res.status(400).json({
           success: false,

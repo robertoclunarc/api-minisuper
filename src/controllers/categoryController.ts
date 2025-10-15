@@ -12,8 +12,10 @@ export class CategoryController {
         page = 1, 
         limit = 50, 
         search,
-        activo = true 
+        //activo = true 
       } = req.query;
+
+      const activo = req.query.activo === 'true' ? true : req.query.activo === 'false' ? false : true;
 
       const skip = (Number(page) - 1) * Number(limit);
       const queryBuilder = this.categoryRepository
@@ -98,6 +100,7 @@ export class CategoryController {
     try {
       const { error, value } = createCategorySchema.validate(req.body);
       if (error) {
+        console.error(error.details.map(detail => detail.message))
         return res.status(400).json({
           success: false,
           message: 'Datos de entrada inválidos',

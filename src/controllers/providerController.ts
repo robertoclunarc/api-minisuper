@@ -12,15 +12,15 @@ export class ProviderController {
         page = 1, 
         limit = 50, 
         search,
-        activo = true 
-      } = req.query;
-
+        //activo = true 
+      } = req.query;      
+      const activo = req.query.activo === 'true' ? true : req.query.activo === 'false' ? false : true;
       const skip = (Number(page) - 1) * Number(limit);
       const queryBuilder = this.providerRepository
         .createQueryBuilder('proveedor')
         .leftJoinAndSelect('proveedor.productos', 'productos')
         .where('proveedor.activo = :activo', { activo });
-
+      
       if (search) {
         queryBuilder.andWhere(
           '(proveedor.nombre LIKE :search OR proveedor.contacto LIKE :search OR proveedor.email LIKE :search)',
@@ -90,6 +90,7 @@ export class ProviderController {
     try {
       const { error, value } = createProviderSchema.validate(req.body);
       if (error) {
+        console.error(error.details.map(detail => detail.message))
         return res.status(400).json({
           success: false,
           message: 'Datos de entrada inválidos',

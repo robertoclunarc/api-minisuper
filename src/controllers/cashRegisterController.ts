@@ -47,13 +47,13 @@ export class CashRegisterController {
         observaciones 
       } = req.body;
 
-      console.log('🔓 Opening cash register request:', {
+      /*console.log('🔓 Opening cash register request:', {
         caja_id,
         monto_inicial_usd,
         monto_inicial_ves,
         user_id: req.user?.id,      // ✅ LOG DEL USER ID
         username: req.user?.username // ✅ LOG DEL USERNAME
-      });
+      });*/
 
       // Verificar que la caja existe
       const cashRegister = await this.cashRegisterRepository.findOne({
@@ -75,10 +75,10 @@ export class CashRegisterController {
         });
       }
 
-      console.log('👤 User trying to open cash:', { 
+      /*console.log('👤 User trying to open cash:', { 
         id: req.user.id, 
         username: req.user.username 
-      });
+      });*/
 
       // Verificar que no hay una caja ya abierta para este usuario
       const existingOpen = await this.cashCloseRepository.findOne({
@@ -88,7 +88,7 @@ export class CashRegisterController {
         }
       });
 
-      console.log('🔍 Existing open cash for user:', existingOpen);
+      //console.log('🔍 Existing open cash for user:', existingOpen);
 
       if (existingOpen) {
         return res.status(400).json({
@@ -105,7 +105,7 @@ export class CashRegisterController {
         }
       });
 
-      console.log('🔍 Cash register status:', cajaAbierta);
+      //console.log('🔍 Cash register status:', cajaAbierta);
 
       if (cajaAbierta) {
         return res.status(400).json({
@@ -127,11 +127,11 @@ export class CashRegisterController {
         observaciones
       });
 
-      console.log('💾 Creating cash close record:', {
+      /*console.log('💾 Creating cash close record:', {
         caja_id: cashClose.caja_id,
         usuario_id: cashClose.usuario_id,
         estado: cashClose.estado
-      });
+      });*/
 
       await this.cashCloseRepository.save(cashClose);
 
@@ -142,7 +142,7 @@ export class CashRegisterController {
         .where('cierre.id = :id', { id: cashClose.id })
         .getOne();
 
-      console.log('✅ Cash register opened successfully:', savedCashClose);
+      //console.log('✅ Cash register opened successfully:', savedCashClose);
 
       res.status(201).json({
         success: true,
@@ -250,7 +250,7 @@ export class CashRegisterController {
         relations: ['caja', 'usuario']
       });
 
-      console.log('🔍 Found open cash for user:', openCash);
+      //console.log('🔍 Found open cash for user:', openCash);
 
       res.json({
         success: true,

@@ -8,7 +8,8 @@ export const createCategorySchema = Joi.object({
   }),
   descripcion: Joi.string().max(500).optional().allow('').messages({
     'string.max': 'La descripción no puede exceder 500 caracteres'
-  })
+  }),
+  activo: Joi.boolean().optional()
 });
 
 export const updateCategorySchema = Joi.object({

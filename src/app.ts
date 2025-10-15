@@ -64,7 +64,7 @@ app.use('/api/sales', saleRoutes);
 app.use('/api/reports', reportRoutes);
 
 app.use('/api/currency', currencyRoutes);
-app.use('/api/provider', providerRoutes);
+app.use('/api/providers', providerRoutes);
 app.use('/api/categories', categoryRoutes);
 app.use('/api/cash-registers', cashRegisterRoutes);
 

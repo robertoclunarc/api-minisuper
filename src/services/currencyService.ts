@@ -81,12 +81,12 @@ export class CurrencyService {
    * Guarda la tasa de cambio en la base de datos
    */
   private async saveExchangeRate(tasaBcv: number, tasaParalelo: number | null): Promise<void> {
-    try {
-      const today = new Date().toISOString().split('T')[0] || '';
-      
+    try {      
+      const today = new Date();
+      const todayStr: string = today.toISOString().split('T')[0] ?? '';
       // Verificar si ya existe una tasa para hoy
       const existingRate = await this.exchangeRateRepository.findOne({
-        where: { fecha: new Date(today) }
+        where: { fecha: todayStr }
       });
 
       if (existingRate) {
@@ -94,12 +94,12 @@ export class CurrencyService {
         await this.exchangeRateRepository.update(existingRate.id, {
           tasa_bcv: tasaBcv,
           tasa_paralelo: tasaParalelo ?? 0,
-          created_at: new Date()
+          created_at: new Date().toISOString(),
         });
       } else {
         // Crear nueva tasa
         const newRate = this.exchangeRateRepository.create({
-          fecha: new Date(today),
+          fecha: todayStr,
           tasa_bcv: tasaBcv,
           tasa_paralelo: tasaParalelo ?? 0,
           fuente: this.PYDOLAR_API
@@ -126,11 +126,20 @@ export class CurrencyService {
    * Obtiene la tasa de cambio para una fecha específica
    */
   public async getExchangeRateByDate(fecha: string): Promise<ExchangeRate | null> {
-    console.log('Buscando tasa para la fecha:', fecha);
+    
     const response = await this.exchangeRateRepository.findOne({
-      where: { fecha: new Date(fecha) }
+      where: { fecha: fecha }
     });
-    console.log('Tasa encontrada:', response);
+    
+    return response;
+  }
+
+  public async getExchangeRateById(id: number): Promise<ExchangeRate | null> {
+    
+    const response = await this.exchangeRateRepository.findOne({
+      where: { id: id }
+    });
+    
     return response;
   }
 
@@ -156,17 +165,19 @@ export class CurrencyService {
   public async getCurrentExchangeRate(): Promise<number> {
     try {
       // Intentar obtener la tasa de hoy desde la BD
-      const today = new Date().toISOString().split('T')[0]  || '';
+      const today = new Date();
+      const todayStr: string = today.toISOString().split('T')[0] ?? '';
       
       let exchangeRate = await this.exchangeRateRepository.findOne({
-        where: { fecha: new Date(today) }
+        where: { fecha: todayStr }
       });
-
+      
       if (!exchangeRate) {
         // Si no existe, obtener desde la API externa
         exchangeRate = await this.fetchAndSaveExchangeRate();
+        
       }
-
+      
       return exchangeRate?.tasa_bcv || 1;
     } catch (error) {
       console.error('Error obteniendo tasa de cambio:', error);
@@ -181,18 +192,18 @@ export class CurrencyService {
       const response = await axios.get('https://ve.dolarapi.com/v1/dolares/oficial', {
         timeout: 5000
       });
-
+      console.log('Response from external API:', response.data);
       if (response.data && response.data.promedio) {
         const rate = response.data.promedio;
-        const today = new Date().toISOString().split('T')[0]  || '';
-
+        const today = new Date();
+        const todayStr: string = today.toISOString().split('T')[0] ?? '';
         // ✅ USAR upsert PARA EVITAR DUPLICADOS
         const exchangeRate = await this.exchangeRateRepository
           .createQueryBuilder()
           .insert()
           .into(ExchangeRate)
           .values({
-            fecha: today,
+            fecha: todayStr,
             tasa_bcv: rate,
             tasa_paralelo: rate,
             fuente: 'https://ve.dolarapi.com/v1/dolares/oficial'
@@ -204,7 +215,7 @@ export class CurrencyService {
 
         // Retornar el registro actualizado
         return await this.exchangeRateRepository.findOne({
-          where: { fecha: new Date(today) }
+          where: { fecha: todayStr }
         });
       }
 
@@ -219,23 +230,25 @@ export class CurrencyService {
    * Actualiza la tasa de cambio manualmente (para administradores)
    */
   public async updateExchangeRateManually(
+    id: number,
     fecha: string, 
     tasaBcv: number, 
     tasaParalelo?: number
   ): Promise<ExchangeRate> {
-    const existingRate = await this.getExchangeRateByDate(fecha);
+
+    const existingRate = await this.getExchangeRateById(id);
     
     if (existingRate) {
-      await this.exchangeRateRepository.update(existingRate.id, {
+      await this.exchangeRateRepository.update(id, {
         tasa_bcv: tasaBcv,
         tasa_paralelo: tasaParalelo || existingRate.tasa_paralelo,
         fuente: 'manual'
       });
       
-      return await this.getExchangeRateByDate(fecha) as ExchangeRate;
+      return await this.getExchangeRateById(id) as ExchangeRate;
     } else {
       const newRate = this.exchangeRateRepository.create({
-        fecha: new Date(fecha),
+        fecha: fecha,
         tasa_bcv: tasaBcv,
         tasa_paralelo: tasaParalelo || 0,
         fuente: 'manual'

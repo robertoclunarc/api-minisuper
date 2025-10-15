@@ -44,7 +44,8 @@ export const createProductSchema = Joi.object({
   }),
   unidad_medida: Joi.string().valid('unidad', 'kg', 'litro', 'gramo', 'ml').default('unidad').messages({
     'any.only': 'La unidad de medida debe ser: unidad, kg, litro, gramo, o ml'
-  })
+  }),
+  activo: Joi.boolean().optional()
 });
 
 export const updateProductSchema = Joi.object({

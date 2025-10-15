@@ -10,6 +10,12 @@ const currencyController = new CurrencyController();
 router.get('/current', /*authenticateToken,*/ currencyController.getCurrentRate);
 router.get('/convert', authenticateToken, currencyController.convertCurrency);
 router.post('/refresh', authenticateToken, currencyController.refreshRate);
+router.get('/statistics', authenticateToken, currencyController.getCurrencyStats);
+router.post('/create',
+  authenticateToken, 
+  requireRole([UserRole.ADMIN]), 
+  currencyController.createManualRate
+);
 
 // Rutas administrativas
 router.put('/update', 

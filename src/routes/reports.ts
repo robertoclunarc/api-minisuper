@@ -22,4 +22,23 @@ router.get('/cashiers',
   reportController.getCashierReport
 );
 
+// Rutas de reportes (solo para usuarios autenticados)
+router.get('/sales/products', 
+  authenticateToken, 
+  reportController.getSalesReportByProduct
+);
+
+router.get('/sales/summary', 
+  authenticateToken, 
+  reportController.getSalesReportSummary
+);
+
+// Rutas adicionales para administradores
+router.get('/sales/detailed', 
+  authenticateToken, 
+  requireRole([UserRole.ADMIN]), 
+  reportController.getSalesReportSummary // Placeholder por ahora
+);
+
+
 export default router;

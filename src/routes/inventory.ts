@@ -7,12 +7,12 @@ const router = Router();
 const inventoryController = new InventoryController();
 
 // Rutas para consultar stock (cajeros y admins)
-router.get('/stock', authenticateToken, inventoryController.getOverallStock);
+router.get('/batches', authenticateToken, inventoryController.getBatches);
 router.get('/stock/:product_id', authenticateToken, inventoryController.getStockByProduct);
 router.get('/expiring', authenticateToken, inventoryController.getExpiringProducts);
 
 // Rutas para gestionar inventario (solo admins)
-router.post('/batch', 
+router.post('/batches', 
   authenticateToken, 
   requireRole([UserRole.ADMIN]), 
   inventoryController.createBatch
@@ -24,7 +24,8 @@ router.post('/batch/multiple',
   inventoryController.createMultipleBatches
 );
 
-router.put('/adjust', 
+//router.put('/batches/:id', authenticateToken, inventoryController.updateBatch);
+router.put('/batches/:id', 
   authenticateToken, 
   requireRole([UserRole.ADMIN]), 
   inventoryController.adjustStock
